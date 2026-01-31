@@ -1,3 +1,3 @@
 # Table Client
 
-`npm install` then `npm run dev` (port 5173).
+Vite uses `host: true` for LAN.

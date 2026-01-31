@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
 import { ActionType } from "../../shared/game.js";
@@ -20,7 +20,7 @@ function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
 }
 
-function Cell({ size, isDark, children, onClick }) {
+function Cell({ size, isDark, isActive, children, onClick }) {
   return (
     <div
       onClick={onClick}
@@ -31,9 +31,9 @@ function Cell({ size, isDark, children, onClick }) {
         alignItems: "center",
         justifyContent: "center",
         userSelect: "none",
-        border: "1px solid rgba(0,0,0,0.06)",
+        border: isActive ? "2px solid rgba(0,0,0,0.5)" : "1px solid rgba(0,0,0,0.06)",
         background: isDark ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,1)",
-        fontSize: Math.floor(size * 0.55),
+        fontSize: Math.floor(size * 0.40),
         cursor: onClick ? "pointer" : "default"
       }}
     >
@@ -85,11 +85,7 @@ export default function App() {
     ws.onerror = () => setStatus("error");
 
     return () => {
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
+      try { ws.close(); } catch {}
     };
   }, [wsUrl]);
 
@@ -101,12 +97,14 @@ export default function App() {
   const joinUrl = sessionInfo?.joinUrl || "";
   const game = publicState?.game || null;
   const grid = game?.grid || { w: 10, h: 7 };
-  const hero = game?.entities?.hero || null;
-  const enemy = game?.entities?.enemy || null;
+  const heroes = game?.heroes || [];
+  const enemy = game?.enemy || null;
   const log = game?.log || [];
-  const hasGame = Boolean(game);
+  const activePlayerId = game?.turn?.activePlayerId || null;
 
-  const cellSize = 64; // good for 50" table; tune later
+  const enemyHpText = enemy ? `${enemy.hp}/${enemy.maxHp}` : "—";
+
+  const cellSize = 64;
 
   function tryMove(toX, toY) {
     const ws = wsRef.current;
@@ -114,8 +112,14 @@ export default function App() {
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.MOVE, params: { toX, toY } }, "move")));
   }
 
+  function heroGlyph(h) {
+    return `🧙 ${h.ownerPlayerId.slice(0, 2)}`;
+  }
+
+  const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
+
   return (
-    <div style={{ padding: 20, maxWidth: 1200, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
+    <div style={{ padding: 20, maxWidth: 1300, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0 }}>TouchTable Dungeon — Table</h1>
         <div style={{ ...mono, opacity: 0.8 }}>
@@ -123,7 +127,7 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12, alignItems: "start", marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "440px 1fr", gap: 12, alignItems: "start", marginTop: 12 }}>
         <div>
           <div style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>Session</h2>
@@ -149,6 +153,9 @@ export default function App() {
                   <li key={s.seat} style={{ marginBottom: 6 }}>
                     <span style={mono}>seat {s.seat}:</span>{" "}
                     {s.occupied ? s.playerName : <span style={{ opacity: 0.6 }}>empty</span>}
+                    {s.playerId && activePlayerId === s.playerId ? (
+                      <span style={{ marginLeft: 8, ...mono }}>← active</span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -159,19 +166,21 @@ export default function App() {
 
           <div style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>Encounter</h2>
-            {!hasGame ? (
-              <p style={{ opacity: 0.8 }}>
-                No encounter yet. Join a seat from a phone to start Milestone 2.
-              </p>
-            ) : (
+            {game ? (
               <>
                 <div style={mono}>
-                  hero HP: {hero.hp}/{hero.maxHp} • enemy HP: {enemy.hp}/{enemy.maxHp}
+                  Active: {activePlayerId ? activePlayerId.slice(0, 4) : "—"}{" "}
+                  {activeHero ? `• pos (${activeHero.x},${activeHero.y})` : ""}
+                </div>
+                <div style={{ marginTop: 8, opacity: 0.9 }}>
+                  Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
                 </div>
                 <p style={{ marginBottom: 0, opacity: 0.75 }}>
-                  Tap a tile to MOVE (range 1). Use the phone to ATTACK / END TURN.
+                  Tap a tile to MOVE the active hero (range 1). Phones ATTACK / END TURN on their turn.
                 </p>
               </>
+            ) : (
+              <p style={{ opacity: 0.8 }}>No encounter yet. Join from at least one phone to start.</p>
             )}
           </div>
 
@@ -195,7 +204,6 @@ export default function App() {
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${grid.w}, ${cellSize}px)`,
-              gap: 0,
               width: grid.w * cellSize,
               touchAction: "manipulation"
             }}
@@ -203,17 +211,21 @@ export default function App() {
             {Array.from({ length: grid.h }).map((_, y) =>
               Array.from({ length: grid.w }).map((__, x) => {
                 const isDark = (x + y) % 2 === 1;
-                const isHero = hero && hero.x === x && hero.y === y;
+                const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
                 const isEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
-                const glyph = isHero ? "🧙" : isEnemy ? "👾" : "";
+                const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
+
+                const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "👾" : "";
+
                 return (
                   <Cell
                     key={`${x},${y}`}
                     size={cellSize}
                     isDark={isDark}
-                    onClick={hasGame ? () => tryMove(x, y) : undefined}
+                    isActive={Boolean(isActiveCell)}
+                    onClick={game ? () => tryMove(x, y) : undefined}
                   >
-                    {glyph}
+                    {label}
                   </Cell>
                 );
               })

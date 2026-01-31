@@ -2,13 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
 import { ActionType } from "../../shared/game.js";
 
-const cardStyle = {
-  border: "1px solid #ddd",
-  borderRadius: 12,
-  padding: 16,
-  marginBottom: 12,
-  background: "#fff"
-};
+const cardStyle = { border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 12, background: "#fff" };
 
 const mono = {
   fontFamily:
@@ -55,11 +49,7 @@ export default function App() {
         JSON.stringify(
           makeMsg(
             MsgType.HELLO,
-            {
-              role: Role.PHONE,
-              sessionId,
-              resumeToken: resumeToken || undefined
-            },
+            { role: Role.PHONE, sessionId, resumeToken: resumeToken || undefined },
             "hello-phone"
           )
         )
@@ -82,8 +72,6 @@ export default function App() {
             setJoined(true);
             setPlayer(st.player);
           }
-        } else if (msg.t === MsgType.OK && msg.id === "act") {
-          // action accepted
         } else if (msg.t === MsgType.ERROR) {
           setError(msg.payload?.message ?? "Unknown error");
         }
@@ -95,13 +83,7 @@ export default function App() {
     ws.onclose = () => setStatus("disconnected");
     ws.onerror = () => setStatus("error");
 
-    return () => {
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
-    };
+    return () => { try { ws.close(); } catch {} };
   }, [wsUrl, resumeToken, sessionId]);
 
   function reconnect() {
@@ -113,33 +95,24 @@ export default function App() {
     setError(null);
     const ws = wsRef.current;
     const name = playerName.trim().slice(0, 32);
-    if (!name) {
-      setError("Enter a player name.");
-      return;
-    }
+    if (!name) return setError("Enter a player name.");
     localStorage.setItem("tt_player_name", name);
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setError("Not connected to server.");
-      return;
-    }
-
+    if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
     ws.send(JSON.stringify(makeMsg(MsgType.JOIN, { playerName: name, seat: Number(seat) || undefined }, "join")));
   }
 
   function sendAction(action) {
     setError(null);
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setError("Not connected to server.");
-      return;
-    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params: {} }, "act")));
   }
 
   const g = privateState?.game || null;
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
+  const enemy = g?.enemy || null;
   const allowed = new Set(g?.allowedActions || []);
 
   return (
@@ -160,10 +133,7 @@ export default function App() {
             onChange={(e) => setWsUrl(e.target.value)}
             style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ccc" }}
           />
-          <button
-            onClick={reconnect}
-            style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #ccc", background: "#fff" }}
-          >
+          <button onClick={reconnect} style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #ccc", background: "#fff" }}>
             Reconnect
           </button>
         </div>
@@ -191,15 +161,9 @@ export default function App() {
               style={{ padding: 12, borderRadius: 10, border: "1px solid #ccc" }}
             />
           </div>
-          <button
-            onClick={doJoin}
-            style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "1px solid #ccc", background: "#fff" }}
-          >
+          <button onClick={doJoin} style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "1px solid #ccc", background: "#fff" }}>
             Join Seat
           </button>
-          <p style={{ marginBottom: 0, opacity: 0.75 }}>
-            Seat is optional; if taken, the server will assign the next available seat.
-          </p>
         </div>
       ) : (
         <>
@@ -213,6 +177,9 @@ export default function App() {
                 <div style={{ marginTop: 10, opacity: 0.9 }}>
                   Hero HP: <span style={mono}>{hero ? `${hero.hp}/${hero.maxHp}` : "—"}</span>
                 </div>
+                <div style={{ marginTop: 8, opacity: 0.9 }}>
+                  Enemy HP: <span style={mono}>{enemy ? `${enemy.hp}/${enemy.maxHp}` : "—"}</span>
+                </div>
               </>
             ) : (
               <p>Joined, waiting for private state…</p>
@@ -224,37 +191,17 @@ export default function App() {
             <button
               disabled={!active || !allowed.has(ActionType.ATTACK)}
               onClick={() => sendAction(ActionType.ATTACK)}
-              style={{
-                width: "100%",
-                padding: 14,
-                borderRadius: 12,
-                border: "1px solid #ccc",
-                background: "#fff",
-                opacity: !active ? 0.6 : 1,
-                marginBottom: 10
-              }}
+              style={{ width: "100%", padding: 14, borderRadius: 12, border: "1px solid #ccc", background: "#fff", opacity: !active ? 0.6 : 1, marginBottom: 10 }}
             >
               Attack (melee)
             </button>
-
             <button
               disabled={!active || !allowed.has(ActionType.END_TURN)}
               onClick={() => sendAction(ActionType.END_TURN)}
-              style={{
-                width: "100%",
-                padding: 14,
-                borderRadius: 12,
-                border: "1px solid #ccc",
-                background: "#fff",
-                opacity: !active ? 0.6 : 1
-              }}
+              style={{ width: "100%", padding: 14, borderRadius: 12, border: "1px solid #ccc", background: "#fff", opacity: !active ? 0.6 : 1 }}
             >
               End Turn
             </button>
-
-            <p style={{ marginBottom: 0, opacity: 0.75 }}>
-              Move is done on the table by tapping a tile (range 1).
-            </p>
           </div>
         </>
       )}

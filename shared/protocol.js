@@ -5,10 +5,8 @@ export const MsgType = Object.freeze({
   JOIN: "JOIN",
   ACTION: "ACTION",
   PING: "PING",
-
   OK: "OK",
   ERROR: "ERROR",
-
   SESSION_INFO: "SESSION_INFO",
   STATE_PUBLIC: "STATE_PUBLIC",
   STATE_PRIVATE: "STATE_PRIVATE"

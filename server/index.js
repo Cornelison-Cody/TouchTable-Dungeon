@@ -10,6 +10,4 @@ app.get("/health", (_, res) => res.json({ ok: true }));
 setupWebSocket(httpServer);
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-httpServer.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+httpServer.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
