@@ -1,0 +1,10 @@
+{
+  "name": "touchtable-dungeon",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client-table",
+    "client-phone",
+    "shared"
+  ]
+}
