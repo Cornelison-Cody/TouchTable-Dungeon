@@ -20,7 +20,7 @@ function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
 }
 
-function Cell({ size, isDark, isActive, children, onClick }) {
+function Cell({ size, isDark, isActive, isMoveOption, children, onClick }) {
   return (
     <div
       onClick={onClick}
@@ -32,6 +32,7 @@ function Cell({ size, isDark, isActive, children, onClick }) {
         justifyContent: "center",
         userSelect: "none",
         border: isActive ? "2px solid rgba(0,0,0,0.5)" : "1px solid rgba(0,0,0,0.06)",
+        boxShadow: isMoveOption ? "inset 0 0 0 3px rgba(0, 128, 0, 0.30)" : undefined,
         background: isDark ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,1)",
         fontSize: Math.floor(size * 0.40),
         cursor: onClick ? "pointer" : "default"
@@ -101,8 +102,34 @@ export default function App() {
   const enemy = game?.enemy || null;
   const log = game?.log || [];
   const activePlayerId = game?.turn?.activePlayerId || null;
+  const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
 
   const enemyHpText = enemy ? `${enemy.hp}/${enemy.maxHp}` : "—";
+
+  const moveRange = game?.rules?.moveRange ?? 1;
+
+  const occupied = new Set();
+  for (const h of heroes) {
+    if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
+  }
+  if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
+
+  const moveOptions = new Set();
+  if (game && activeHero && activeHero.hp > 0) {
+    for (let dx = -moveRange; dx <= moveRange; dx++) {
+      for (let dy = -moveRange; dy <= moveRange; dy++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist === 0 || dist > moveRange) continue;
+        const nx = activeHero.x + dx;
+        const ny = activeHero.y + dy;
+        if (nx < 0 || ny < 0 || nx >= grid.w || ny >= grid.h) continue;
+        // can't move onto any occupied tile
+        if (occupied.has(`${nx},${ny}`)) continue;
+        moveOptions.add(`${nx},${ny}`);
+      }
+    }
+  }
+
 
   const cellSize = 64;
 
@@ -115,8 +142,6 @@ export default function App() {
   function heroGlyph(h) {
     return `🧙 ${h.ownerPlayerId.slice(0, 2)}`;
   }
-
-  const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
 
   return (
     <div style={{ padding: 20, maxWidth: 1300, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
@@ -176,7 +201,7 @@ export default function App() {
                   Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
                 </div>
                 <p style={{ marginBottom: 0, opacity: 0.75 }}>
-                  Tap a tile to MOVE the active hero (range 1). Phones ATTACK / END TURN on their turn.
+                  Tap a highlighted tile to MOVE the active hero (range {moveRange}). Phones ATTACK / END TURN on their turn.
                 </p>
               </>
             ) : (
@@ -223,7 +248,8 @@ export default function App() {
                     size={cellSize}
                     isDark={isDark}
                     isActive={Boolean(isActiveCell)}
-                    onClick={game ? () => tryMove(x, y) : undefined}
+                    isMoveOption={moveOptions.has(`${x},${y}`)}
+                    onClick={game && moveOptions.has(`${x},${y}`) ? () => tryMove(x, y) : undefined}
                   >
                     {label}
                   </Cell>

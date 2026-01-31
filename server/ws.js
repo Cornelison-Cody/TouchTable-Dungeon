@@ -94,6 +94,7 @@ export function setupWebSocket(server) {
               maxHp: h.maxHp
             })),
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
+            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange },
             log: game.log.slice(-10)
           }
         : null
@@ -113,6 +114,7 @@ export function setupWebSocket(server) {
             youAreActive: isActive,
             hero: hero ? { x: hero.x, y: hero.y, hp: hero.hp, maxHp: hero.maxHp } : null,
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
+            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange },
             allowedActions: isActive && hero && hero.hp > 0 ? [ActionType.ATTACK, ActionType.END_TURN] : []
           }
         : null
