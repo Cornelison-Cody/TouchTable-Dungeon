@@ -133,6 +133,7 @@ export default function App() {
   if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
 
   const moveOptions = [];
+  const moveSet = new Set();
   if (active && hero && hero.hp > 0 && allowed.has(ActionType.MOVE) && apRemaining > 0) {
     for (let dx = -moveRange; dx <= moveRange; dx++) {
       for (let dy = -moveRange; dy <= moveRange; dy++) {
@@ -143,11 +144,18 @@ export default function App() {
         if (nx < 0 || ny < 0 || nx >= grid.w || ny >= grid.h) continue;
         if (occupied.has(`${nx},${ny}`)) continue;
         moveOptions.push({ x: nx, y: ny });
+        moveSet.add(`${nx},${ny}`);
       }
     }
-    // stable order: up, left, right, down-ish (by y then x relative)
+    // stable order: by y then x
     moveOptions.sort((a, b) => (a.y - b.y) || (a.x - b.x));
   }
+
+  const canMoveTo = (x, y) => moveSet.has(`${x},${y}`);
+  const canUp = active && hero ? canMoveTo(hero.x, hero.y - 1) : false;
+  const canDown = active && hero ? canMoveTo(hero.x, hero.y + 1) : false;
+  const canLeft = active && hero ? canMoveTo(hero.x - 1, hero.y) : false;
+  const canRight = active && hero ? canMoveTo(hero.x + 1, hero.y) : false;
 
   return (
     <div style={{ padding: 16, maxWidth: 720, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
@@ -226,34 +234,90 @@ export default function App() {
 
           <div style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>Move</h2>
-            {active && hero ? (
-              moveOptions.length ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
-                  {moveOptions.map((m) => (
-                    <button
-                      key={`${m.x},${m.y}`}
-                      onClick={() => sendMove(m.x, m.y)}
+
+            {!active || !hero ? (
+              <p style={{ marginBottom: 0, opacity: 0.75 }}>Wait for your turn to move.</p>
+            ) : !allowed.has(ActionType.MOVE) || apRemaining <= 0 ? (
+              <p style={{ marginBottom: 0, opacity: 0.75 }}>
+                No actions remaining. End your turn to refresh actions.
+              </p>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, alignItems: "start" }}>
+                  <div>
+                    <div style={{ ...mono, opacity: 0.8, marginBottom: 8 }}>
+                      Tap a highlighted tile to move (costs 1 action).
+                    </div>
+
+                    <div
                       style={{
-                        width: "100%",
-                        padding: 14,
-                        borderRadius: 12,
-                        border: "1px solid #ccc",
-                        background: "#fff"
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 56px)",
+                        gap: 8,
+                        justifyContent: "start"
                       }}
                     >
-                      Move to ({m.x},{m.y})
-                    </button>
-                  ))}
+                      {[-1, 0, 1].map((dy) =>
+                        [-1, 0, 1].map((dx) => {
+                          const x = hero.x + dx;
+                          const y = hero.y + dy;
+                          const inBounds = x >= 0 && y >= 0 && x < grid.w && y < grid.h;
+                          const isCenter = dx === 0 && dy === 0;
+                          const isValid = inBounds && !isCenter && canMoveTo(x, y);
+
+                          return (
+                            <button
+                              key={`${dx},${dy}`}
+                              disabled={!isValid}
+                              onClick={() => sendMove(x, y)}
+                              style={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: 14,
+                                border: "1px solid #ccc",
+                                background: "#fff",
+                                backgroundColor: (() => {
+                                  if (isCenter) return "rgba(0,0,0,0.04)";
+                                  const hasEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
+                                  if (hasEnemy) return "rgba(255,0,0,0.08)";
+                                  const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === x && h.y === y);
+                                  if (otherHero) return "rgba(0,0,0,0.04)";
+                                  if (isValid) return "rgba(0,128,0,0.10)";
+                                  return "#fff";
+                                })(),
+                                opacity: (() => {
+                                  if (isCenter) return 1;
+                                  if (!inBounds) return 0.15;
+                                  const hasEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
+                                  const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === x && h.y === y);
+                                  if (hasEnemy || otherHero) return 1;
+                                  return isValid ? 1 : 0.35;
+                                })(),
+                                fontWeight: isCenter ? 700 : 600,
+                                cursor: isValid ? "pointer" : "default"
+                              }}
+                            >
+                              {(() => {
+                                if (isCenter) return "🧙";
+                                if (!inBounds) return "";
+                                const hasEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
+                                if (hasEnemy) return "👾";
+                                const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === x && h.y === y);
+                                if (otherHero) return "🧙";
+                                return isValid ? "•" : "";
+                              })()}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div style={{ marginTop: 8, opacity: 0.7 }}>
+                      <span style={mono}>Highlighted tiles</span> are valid moves (cost 1 action).
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <p style={{ marginBottom: 0, opacity: 0.75 }}>
-                  {allowed.has(ActionType.MOVE) && apRemaining > 0
-                    ? "No valid moves (blocked or edge of map)."
-                    : "Movement available only on your turn, with actions remaining."}
-                </p>
-              )
-            ) : (
-              <p style={{ marginBottom: 0, opacity: 0.75 }}>Join and wait for your turn to move.</p>
+              </>
             )}
           </div>
           <div style={cardStyle}>

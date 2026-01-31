@@ -197,7 +197,6 @@ export default function App() {
               <>
                 <div style={mono}>
                   Active: {activePlayerId ? activePlayerId.slice(0, 4) : "—"}{" "}
-                  {activeHero ? `• pos (${activeHero.x},${activeHero.y})` : ""}
                 </div>
                 <div style={{ marginTop: 8, opacity: 0.9 }}>
                   Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
