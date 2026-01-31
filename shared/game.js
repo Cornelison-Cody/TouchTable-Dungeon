@@ -15,7 +15,9 @@ export function makeInitialGameState(firstPlayerId) {
     turn: {
       order: [firstPlayerId],
       activeIndex: 0,
-      activePlayerId: firstPlayerId
+      activePlayerId: firstPlayerId,
+      apMax: 2,
+      apRemaining: 2
     },
     heroes: {
       [firstPlayerId]: {
@@ -38,7 +40,8 @@ export function makeInitialGameState(firstPlayerId) {
       moveRange: 1,
       attackRange: 1,
       heroDamage: 2,
-      enemyDamage: 1
+      enemyDamage: 1,
+      actionPointsPerTurn: 2
     },
     log: []
   };
@@ -76,9 +79,17 @@ export function nextActivePlayer(game) {
     if (isHeroAlive(game.heroes[pid])) {
       game.turn.activeIndex = idx;
       game.turn.activePlayerId = pid;
+      resetTurnAP(game);
       return pid;
     }
   }
   game.turn.activePlayerId = null;
   return null;
+}
+
+
+export function resetTurnAP(game) {
+  const ap = game?.rules?.actionPointsPerTurn ?? game?.turn?.apMax ?? 2;
+  game.turn.apMax = ap;
+  game.turn.apRemaining = ap;
 }

@@ -113,6 +113,8 @@ export default function App() {
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
   const enemy = g?.enemy || null;
+  const apRemaining = g?.apRemaining ?? 0;
+  const apMax = g?.apMax ?? 2;
   const allowed = new Set(g?.allowedActions || []);
 
   return (
@@ -176,6 +178,9 @@ export default function App() {
                 </div>
                 <div style={{ marginTop: 10, opacity: 0.9 }}>
                   Hero HP: <span style={mono}>{hero ? `${hero.hp}/${hero.maxHp}` : "—"}</span>
+                </div>
+                <div style={{ marginTop: 8, opacity: 0.9 }}>
+                  Actions: <span style={mono}>{apRemaining}/{apMax}</span>
                 </div>
                 <div style={{ marginTop: 8, opacity: 0.9 }}>
                   Enemy HP: <span style={mono}>{enemy ? `${enemy.hp}/${enemy.maxHp}` : "—"}</span>

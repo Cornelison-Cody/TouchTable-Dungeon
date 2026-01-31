@@ -102,6 +102,8 @@ export default function App() {
   const enemy = game?.enemy || null;
   const log = game?.log || [];
   const activePlayerId = game?.turn?.activePlayerId || null;
+  const apRemaining = game?.turn?.apRemaining ?? 0;
+  const apMax = game?.turn?.apMax ?? (game?.rules?.actionPointsPerTurn ?? 2);
   const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
 
   const enemyHpText = enemy ? `${enemy.hp}/${enemy.maxHp}` : "—";
@@ -115,7 +117,7 @@ export default function App() {
   if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
 
   const moveOptions = new Set();
-  if (game && activeHero && activeHero.hp > 0) {
+  if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
     for (let dx = -moveRange; dx <= moveRange; dx++) {
       for (let dy = -moveRange; dy <= moveRange; dy++) {
         const dist = Math.abs(dx) + Math.abs(dy);

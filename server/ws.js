@@ -7,6 +7,7 @@ import {
   makeInitialGameState,
   manhattan,
   nextActivePlayer,
+  resetTurnAP,
   spawnHeroForPlayer,
   ensurePlayerInTurnOrder,
   isHeroAlive
@@ -65,6 +66,7 @@ export function setupWebSocket(server) {
   function ensureGameFor(playerId, seatIndex0) {
     if (!game) {
       game = makeInitialGameState(playerId);
+      resetTurnAP(game);
       game.log.push({ at: Date.now(), msg: "Encounter started." });
       game.log.push({ at: Date.now(), msg: `Turn: ${playerId.slice(0, 4)}.` });
     } else {
@@ -85,7 +87,7 @@ export function setupWebSocket(server) {
       game: game
         ? {
             grid: game.grid,
-            turn: { activePlayerId: game.turn.activePlayerId, order: game.turn.order },
+            turn: { activePlayerId: game.turn.activePlayerId, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
             heroes: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
               x: h.x,
@@ -94,7 +96,7 @@ export function setupWebSocket(server) {
               maxHp: h.maxHp
             })),
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
-            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange },
+            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
             log: game.log.slice(-10)
           }
         : null
@@ -114,7 +116,7 @@ export function setupWebSocket(server) {
             youAreActive: isActive,
             hero: hero ? { x: hero.x, y: hero.y, hp: hero.hp, maxHp: hero.maxHp } : null,
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
-            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange },
+            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
             allowedActions: isActive && hero && hero.hp > 0 ? [ActionType.ATTACK, ActionType.END_TURN] : []
           }
         : null
@@ -170,6 +172,8 @@ export function setupWebSocket(server) {
 
   function handleMove(ws, id, actorPlayerId, params) {
     if (!requireActive(ws, id, actorPlayerId)) return;
+    // Action points
+    if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
     if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
 
@@ -188,12 +192,15 @@ export function setupWebSocket(server) {
 
     hero.x = nx; hero.y = ny;
     game.log.push({ at: Date.now(), msg: `Hero ${actorPlayerId.slice(0, 4)} moves to (${nx},${ny}).` });
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
   }
 
   function handleAttack(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
+    // Action points
+    if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
     if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
     if (game.enemy.hp <= 0) return reject(ws, id, "ENEMY_DEAD", "Enemy already defeated.");
@@ -203,6 +210,7 @@ export function setupWebSocket(server) {
 
     game.enemy.hp = clamp(game.enemy.hp - game.rules.heroDamage, 0, game.enemy.maxHp);
     game.log.push({ at: Date.now(), msg: `Hero ${actorPlayerId.slice(0, 4)} attacks for ${game.rules.heroDamage}.` });
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     if (game.enemy.hp <= 0) game.log.push({ at: Date.now(), msg: "Enemy defeated!" });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
