@@ -203,7 +203,7 @@ export default function App() {
                   Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
                 </div>
                 <p style={{ marginBottom: 0, opacity: 0.75 }}>
-                  Tap a highlighted tile to MOVE the active hero (range {moveRange}). Phones ATTACK / END TURN on their turn.
+                  Movement is controlled from the active player’s phone. Table is view-only.
                 </p>
               </>
             ) : (
@@ -251,7 +251,7 @@ export default function App() {
                     isDark={isDark}
                     isActive={Boolean(isActiveCell)}
                     isMoveOption={moveOptions.has(`${x},${y}`)}
-                    onClick={game && moveOptions.has(`${x},${y}`) ? () => tryMove(x, y) : undefined}
+                    onClick={undefined}
                   >
                     {label}
                   </Cell>

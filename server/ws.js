@@ -114,10 +114,29 @@ export function setupWebSocket(server) {
       game: game
         ? {
             youAreActive: isActive,
+            grid: game.grid,
+            rules: {
+              moveRange: game.rules.moveRange,
+              attackRange: game.rules.attackRange,
+              actionPointsPerTurn: game.rules.actionPointsPerTurn
+            },
+            heroesPublic: Object.values(game.heroes).map((h) => ({
+              ownerPlayerId: h.ownerPlayerId,
+              x: h.x,
+              y: h.y,
+              hp: h.hp,
+              maxHp: h.maxHp
+            })),
             hero: hero ? { x: hero.x, y: hero.y, hp: hero.hp, maxHp: hero.maxHp } : null,
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
-            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
-            allowedActions: isActive && hero && hero.hp > 0 ? [ActionType.ATTACK, ActionType.END_TURN] : []
+            apRemaining: game.turn.apRemaining,
+            apMax: game.turn.apMax,
+            allowedActions:
+              isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
+                ? [ActionType.MOVE, ActionType.ATTACK, ActionType.END_TURN]
+                : isActive && hero && hero.hp > 0
+                  ? [ActionType.END_TURN]
+                  : []
           }
         : null
     };
@@ -336,11 +355,7 @@ export function setupWebSocket(server) {
 
     if (msg.t === MsgType.ACTION) {
       if (info.role === Role.TABLE) {
-        const action = msg.payload?.action;
-        if (action !== ActionType.MOVE) return reject(ws, msg.id, "TABLE_FORBIDDEN", "Table can only MOVE.");
-        const actor = game?.turn?.activePlayerId ?? null;
-        if (!actor) return reject(ws, msg.id, "NO_ACTIVE_PLAYER", "No active player.");
-        handleAction(ws, msg.id, actor, msg.payload);
+        reject(ws, msg.id, "TABLE_FORBIDDEN", "Table is view-only. Move from your phone.");
         return;
       }
 

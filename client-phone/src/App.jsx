@@ -102,6 +102,13 @@ export default function App() {
     ws.send(JSON.stringify(makeMsg(MsgType.JOIN, { playerName: name, seat: Number(seat) || undefined }, "join")));
   }
 
+  function sendMove(toX, toY) {
+    setError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.MOVE, params: { toX, toY } }, "move")));
+  }
+
   function sendAction(action) {
     setError(null);
     const ws = wsRef.current;
@@ -113,9 +120,34 @@ export default function App() {
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
   const enemy = g?.enemy || null;
+  const grid = g?.grid || { w: 10, h: 7 };
+  const moveRange = g?.rules?.moveRange ?? 1;
+  const heroesPublic = g?.heroesPublic || [];
   const apRemaining = g?.apRemaining ?? 0;
   const apMax = g?.apMax ?? 2;
   const allowed = new Set(g?.allowedActions || []);
+  const occupied = new Set();
+  for (const h of heroesPublic) {
+    if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
+  }
+  if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
+
+  const moveOptions = [];
+  if (active && hero && hero.hp > 0 && allowed.has(ActionType.MOVE) && apRemaining > 0) {
+    for (let dx = -moveRange; dx <= moveRange; dx++) {
+      for (let dy = -moveRange; dy <= moveRange; dy++) {
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (dist === 0 || dist > moveRange) continue;
+        const nx = hero.x + dx;
+        const ny = hero.y + dy;
+        if (nx < 0 || ny < 0 || nx >= grid.w || ny >= grid.h) continue;
+        if (occupied.has(`${nx},${ny}`)) continue;
+        moveOptions.push({ x: nx, y: ny });
+      }
+    }
+    // stable order: up, left, right, down-ish (by y then x relative)
+    moveOptions.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  }
 
   return (
     <div style={{ padding: 16, maxWidth: 720, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
@@ -191,6 +223,39 @@ export default function App() {
             )}
           </div>
 
+
+          <div style={cardStyle}>
+            <h2 style={{ marginTop: 0 }}>Move</h2>
+            {active && hero ? (
+              moveOptions.length ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
+                  {moveOptions.map((m) => (
+                    <button
+                      key={`${m.x},${m.y}`}
+                      onClick={() => sendMove(m.x, m.y)}
+                      style={{
+                        width: "100%",
+                        padding: 14,
+                        borderRadius: 12,
+                        border: "1px solid #ccc",
+                        background: "#fff"
+                      }}
+                    >
+                      Move to ({m.x},{m.y})
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ marginBottom: 0, opacity: 0.75 }}>
+                  {allowed.has(ActionType.MOVE) && apRemaining > 0
+                    ? "No valid moves (blocked or edge of map)."
+                    : "Movement available only on your turn, with actions remaining."}
+                </p>
+              )
+            ) : (
+              <p style={{ marginBottom: 0, opacity: 0.75 }}>Join and wait for your turn to move.</p>
+            )}
+          </div>
           <div style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>Actions</h2>
             <button
