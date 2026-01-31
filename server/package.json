@@ -1,6 +1,9 @@
 {
   "name": "server",
   "type": "module",
+  "scripts": {
+    "dev": "node index.js"
+  },
   "dependencies": {
     "express": "^4.19.2",
     "ws": "^8.16.0",
