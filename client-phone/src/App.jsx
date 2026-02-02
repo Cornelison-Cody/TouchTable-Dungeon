@@ -1,13 +1,63 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
 import { ActionType, hexNeighbors } from "../../shared/game.js";
 
-const cardStyle = { border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 12, background: "#fff" };
+const theme = {
+  bgA: "#eaf6ff",
+  bgB: "#f6efe4",
+  card: "#ffffff",
+  text: "#1d2733",
+  sub: "#5f6d7a",
+  border: "#d2dde8",
+  brand: "#0d8f8a",
+  brandDark: "#096c69",
+  danger: "#d24545",
+  success: "#2e8f52",
+  shadow: "0 12px 28px rgba(20, 40, 65, 0.12)"
+};
+
+const shellStyle = {
+  minHeight: "100vh",
+  padding: 16,
+  background: `radial-gradient(circle at 10% -10%, ${theme.bgA}, transparent 45%), radial-gradient(circle at 90% 0%, ${theme.bgB}, transparent 40%), #f7fafc`,
+  color: theme.text,
+  fontFamily: "Avenir Next, Segoe UI, Helvetica Neue, sans-serif"
+};
+
+const cardStyle = {
+  border: `1px solid ${theme.border}`,
+  borderRadius: 18,
+  padding: 14,
+  marginBottom: 12,
+  background: theme.card,
+  boxShadow: theme.shadow
+};
 
 const mono = {
-  fontFamily:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 };
+
+function Icon({ path, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 2 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
+      <path d={path} stroke={stroke} fill={fill} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StatTile({ icon, label, value, tone = "neutral" }) {
+  const bg = tone === "danger" ? "#ffecec" : tone === "success" ? "#e9f7ef" : "#eef5fb";
+  const color = tone === "danger" ? theme.danger : tone === "success" ? theme.success : "#365772";
+  return (
+    <div style={{ background: bg, color, borderRadius: 12, padding: "10px 12px", border: "1px solid rgba(0,0,0,0.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>
+        {icon}
+        {label}
+      </div>
+      <div style={{ marginTop: 4, fontSize: 18, fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
 
 function getQuerySessionId() {
   const u = new URL(window.location.href);
@@ -30,6 +80,7 @@ export default function App() {
   const [joined, setJoined] = useState(false);
   const [player, setPlayer] = useState(null);
   const [privateState, setPrivateState] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const resumeToken = useMemo(() => localStorage.getItem("tt_resume_token") || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
@@ -45,15 +96,7 @@ export default function App() {
 
     ws.onopen = () => {
       setStatus("connected");
-      ws.send(
-        JSON.stringify(
-          makeMsg(
-            MsgType.HELLO,
-            { role: Role.PHONE, sessionId, resumeToken: resumeToken || undefined },
-            "hello-phone"
-          )
-        )
-      );
+      ws.send(JSON.stringify(makeMsg(MsgType.HELLO, { role: Role.PHONE, sessionId, resumeToken: resumeToken || undefined }, "hello-phone")));
     };
 
     ws.onmessage = (ev) => {
@@ -85,12 +128,15 @@ export default function App() {
     ws.onclose = () => setStatus("disconnected");
     ws.onerror = () => setStatus("error");
 
-    return () => { try { ws.close(); } catch {} };
+    return () => {
+      try { ws.close(); } catch {}
+    };
   }, [wsUrl, resumeToken, sessionId]);
 
   function reconnect() {
     localStorage.setItem("tt_server_ws", wsUrl);
     setWsUrl(wsUrl.trim());
+    setSettingsOpen(false);
   }
 
   function doJoin() {
@@ -127,6 +173,7 @@ export default function App() {
   const apRemaining = g?.apRemaining ?? 0;
   const apMax = g?.apMax ?? 2;
   const allowed = new Set(g?.allowedActions || []);
+
   const occupied = new Set();
   for (const h of heroesPublic) {
     if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
@@ -141,224 +188,247 @@ export default function App() {
           x: c.x,
           y: c.y,
           inBounds: inBounds(c.x, c.y),
-          blocked: occupied.has(`${c.x},${c.y}`),
           canMove: inBounds(c.x, c.y) && !occupied.has(`${c.x},${c.y}`)
         }))
       : [];
-  const MINI_HEX_W = 68;
-  const MINI_HEX_H = 58;
+
+  const MINI_HEX_W = 70;
+  const MINI_HEX_H = 60;
   const MINI_HEX_POINTS = `${MINI_HEX_W * 0.25},0 ${MINI_HEX_W * 0.75},0 ${MINI_HEX_W},${MINI_HEX_H * 0.5} ${MINI_HEX_W * 0.75},${MINI_HEX_H} ${MINI_HEX_W * 0.25},${MINI_HEX_H} 0,${MINI_HEX_H * 0.5}`;
 
+  const statusTone = status === "connected" ? { bg: "#e9f7ef", color: theme.success } : status === "error" ? { bg: "#ffecec", color: theme.danger } : { bg: "#eef5fb", color: "#365772" };
+
   return (
-    <div style={{ padding: 16, maxWidth: 720, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>TouchTable Dungeon — Phone</h1>
-        <div style={{ ...mono, opacity: 0.8 }}>
-          status: {status} {clientId ? `• clientId=${clientId}` : ""}
-        </div>
-      </div>
-
-      <div style={cardStyle}>
-        <h2 style={{ marginTop: 0 }}>Server</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ width: 120 }}>WS URL</label>
-          <input
-            value={wsUrl}
-            onChange={(e) => setWsUrl(e.target.value)}
-            style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ccc" }}
-          />
-          <button onClick={reconnect} style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #ccc", background: "#fff" }}>
-            Reconnect
-          </button>
-        </div>
-      </div>
-
-      {!joined ? (
-        <div style={cardStyle}>
-          <h2 style={{ marginTop: 0 }}>Join</h2>
-          <div style={{ marginBottom: 10, opacity: 0.8 }}>
-            session: <span style={mono}>{sessionId || "(none)"}</span>
+    <div style={shellStyle}>
+      <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #ffffff, #f8fcff)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.2 }}>Dungeon Phone Console</div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
-            <input
-              placeholder="Your name"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              style={{ padding: 12, borderRadius: 10, border: "1px solid #ccc" }}
-            />
-            <input
-              type="number"
-              min="1"
-              max="6"
-              value={seat}
-              onChange={(e) => setSeat(e.target.value)}
-              style={{ padding: 12, borderRadius: 10, border: "1px solid #ccc" }}
-            />
-          </div>
-          <button onClick={doJoin} style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "1px solid #ccc", background: "#fff" }}>
-            Join Seat
-          </button>
-        </div>
-      ) : (
-        <>
-          <div style={cardStyle}>
-            <h2 style={{ marginTop: 0 }}>You</h2>
-            {player ? (
-              <>
-                <div style={mono}>
-                  {player.playerName} • seat {player.seat} • {active ? "YOUR TURN" : "waiting…"}
-                </div>
-                <div style={{ marginTop: 10, opacity: 0.9 }}>
-                  Hero HP: <span style={mono}>{hero ? `${hero.hp}/${hero.maxHp}` : "—"}</span>
-                </div>
-                <div style={{ marginTop: 8, opacity: 0.9 }}>
-                  Actions: <span style={mono}>{apRemaining}/{apMax}</span>
-                </div>
-                <div style={{ marginTop: 8, opacity: 0.9 }}>
-                  Enemy HP: <span style={mono}>{enemy ? `${enemy.hp}/${enemy.maxHp}` : "—"}</span>
-                </div>
-              </>
-            ) : (
-              <p>Joined, waiting for private state…</p>
-            )}
-          </div>
-
-
-          <div style={cardStyle}>
-            <h2 style={{ marginTop: 0 }}>Move</h2>
-
-            {!active || !hero ? (
-              <p style={{ marginBottom: 0, opacity: 0.75 }}>Wait for your turn to move.</p>
-            ) : !allowed.has(ActionType.MOVE) || apRemaining <= 0 ? (
-              <p style={{ marginBottom: 0, opacity: 0.75 }}>No actions remaining. End your turn to refresh actions.</p>
-            ) : (
-              <>
-                <div style={{ ...mono, opacity: 0.8, marginBottom: 10 }}>
-                  Tap a highlighted hex to move, or tap the enemy hex to attack.
-                </div>
-
-                <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 96,
-                      top: 82,
-                      width: MINI_HEX_W,
-                      height: MINI_HEX_H,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 20
-                    }}
-                  >
-                    <svg
-                      width={MINI_HEX_W}
-                      height={MINI_HEX_H}
-                      viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`}
-                      aria-hidden="true"
-                      style={{ position: "absolute", inset: 0 }}
-                    >
-                      <polygon points={MINI_HEX_POINTS} fill="rgba(0,0,0,0.04)" stroke="rgba(0,0,0,0.18)" strokeWidth="1" />
-                    </svg>
-                    <div style={{ position: "relative" }}>🧙</div>
-                  </div>
-
-                  {(() => {
-                    const xStep = MINI_HEX_W * 0.75;
-                    const yStep = MINI_HEX_H;
-                    const centerLeft = 96;
-                    const centerTop = 82;
-                    const heroParityOffset = (hero.x % 2 === 0) ? 0 : (yStep / 2);
-
-                    return neighborCells.map((c) => {
-                      const cParityOffset = (c.x % 2 === 0) ? 0 : (yStep / 2);
-                      const left = centerLeft + ((c.x - hero.x) * xStep);
-                      const top = centerTop + ((c.y - hero.y) * yStep) + (cParityOffset - heroParityOffset);
-                      const hasEnemy = enemy && enemy.hp > 0 && enemy.x === c.x && enemy.y === c.y;
-                      const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
-                      const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
-                      const canTap = c.canMove || canAttack;
-
-                      const label = !c.inBounds
-                        ? ""
-                        : hasEnemy
-                          ? "👾"
-                          : otherHero
-                            ? (otherHero.ownerPlayerName ? otherHero.ownerPlayerName.split(/\s+/)[0].slice(0, 2).toUpperCase() : "🧙")
-                            : c.canMove
-                              ? "•"
-                              : "";
-
-                      const bg = !c.inBounds
-                        ? "rgba(0,0,0,0.02)"
-                        : hasEnemy
-                          ? "rgba(255,0,0,0.08)"
-                          : otherHero
-                            ? "rgba(0,0,0,0.04)"
-                            : c.canMove
-                              ? "rgba(0,128,0,0.10)"
-                              : "#fff";
-
-                      const opacity = !c.inBounds ? 0.25 : (hasEnemy || otherHero || c.canMove) ? 1 : 0.35;
-
-                      return (
-                        <button
-                          key={`${c.x},${c.y}`}
-                          disabled={!canTap}
-                          onClick={() => (canAttack ? sendAction(ActionType.ATTACK) : sendMove(c.x, c.y))}
-                          style={{
-                            position: "absolute",
-                            left,
-                            top,
-                            width: MINI_HEX_W,
-                            height: MINI_HEX_H,
-                            border: "none",
-                            background: "transparent",
-                            opacity,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 18,
-                            padding: 0,
-                            cursor: canTap ? "pointer" : "default"
-                          }}
-                        >
-                          <svg
-                            width={MINI_HEX_W}
-                            height={MINI_HEX_H}
-                            viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`}
-                            aria-hidden="true"
-                            style={{ position: "absolute", inset: 0 }}
-                          >
-                            <polygon points={MINI_HEX_POINTS} fill={bg} stroke="rgba(0,0,0,0.18)" strokeWidth="1" />
-                          </svg>
-                          <div style={{ position: "relative" }}>{label}</div>
-                        </button>
-                      );
-                    });
-                  })()}
-                </div>
-
-                <div style={{ marginTop: 10, opacity: 0.75, textAlign: "center" }}>
-                  Actions left: <span style={mono}>{apRemaining}/{apMax}</span>
-                </div>
-              </>
-            )}
-          </div>
-          <div style={cardStyle}>
-            <h2 style={{ marginTop: 0 }}>Actions</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
-              disabled={!active || !allowed.has(ActionType.END_TURN)}
-              onClick={() => sendAction(ActionType.END_TURN)}
-              style={{ width: "100%", padding: 14, borderRadius: 12, border: "1px solid #ccc", background: "#fff", opacity: !active ? 0.6 : 1 }}
+              onClick={() => {
+                setSettingsOpen((v) => {
+                  const next = !v;
+                  return next;
+                });
+              }}
+              aria-label="Open settings"
+              style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer", display: "grid", placeItems: "center" }}
             >
-              End Turn
+              <Icon path="M6 12h.01 M12 12h.01 M18 12h.01" size={18} stroke={theme.sub} strokeWidth={3} />
             </button>
           </div>
-        </>
-      )}
 
-      {error ? <p style={{ color: "crimson" }}>Error: {error}</p> : null}
+          {settingsOpen ? (
+            <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", top: 54, width: "min(400px, 80vw)", background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: theme.shadow, padding: 12, zIndex: 10 }}>
+              <div style={{ ...mono, fontSize: 12, padding: "6px 10px", borderRadius: 999, background: statusTone.bg, color: statusTone.color, display: "inline-block", marginBottom: 8 }}>
+                {status}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                <input
+                  value={wsUrl}
+                  onChange={(e) => setWsUrl(e.target.value)}
+                  style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, fontSize: 14 }}
+                />
+                <button
+                  onClick={reconnect}
+                  style={{ padding: "10px 12px", borderRadius: 10, border: "none", background: theme.brand, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+                >
+                  Reconnect
+                </button>
+              </div>
+              <button
+                onClick={() => {
+                  setSettingsOpen(false);
+                }}
+                style={{ marginTop: 10, width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff", color: theme.sub, fontWeight: 600, cursor: "pointer" }}
+              >
+                Close Menu
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div style={{ height: 2 }} />
+
+        {!joined ? (
+          <div style={cardStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontWeight: 700 }}>
+              <Icon path="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M4 20a8 8 0 0 1 16 0" stroke={theme.brandDark} />
+              Join Seat
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 8 }}>
+              <input
+                placeholder="Your name"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}` }}
+              />
+              <input
+                type="number"
+                min="1"
+                max="6"
+                value={seat}
+                onChange={(e) => setSeat(e.target.value)}
+                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}` }}
+              />
+            </div>
+            <button
+              onClick={doJoin}
+              style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "none", background: theme.brandDark, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+            >
+              Enter Dungeon
+            </button>
+          </div>
+        ) : (
+          <>
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontWeight: 800, fontSize: 18 }}>{player?.playerName || "Player"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ padding: "6px 10px", borderRadius: 999, fontWeight: 700, fontSize: 12, background: active ? "#e9f7ef" : "#eef5fb", color: active ? theme.success : "#365772" }}>
+                    {active ? "YOUR TURN" : "WAITING"}
+                  </div>
+                  <button
+                    disabled={!active || !allowed.has(ActionType.END_TURN)}
+                    onClick={() => sendAction(ActionType.END_TURN)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: "none",
+                      background: !active || !allowed.has(ActionType.END_TURN) ? "#dbe4ee" : "#ffb347",
+                      color: !active || !allowed.has(ActionType.END_TURN) ? "#7e8c98" : "#3d2a11",
+                      fontWeight: 800,
+                      cursor: !active || !allowed.has(ActionType.END_TURN) ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    End Turn
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+                <StatTile
+                  icon={<Icon path="M12 21s-7-4.5-7-10a7 7 0 0 1 14 0c0 5.5-7 10-7 10z" stroke={theme.danger} />}
+                  label="HP"
+                  value={hero ? `${hero.hp}/${hero.maxHp}` : "-"}
+                  tone="danger"
+                />
+                <StatTile
+                  icon={<Icon path="M13 2L5 14h6l-1 8 8-12h-6z" stroke={theme.brandDark} />}
+                  label="Action"
+                  value={`${apRemaining}/${apMax}`}
+                />
+              </div>
+            </div>
+
+            <div style={cardStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontWeight: 700 }}>
+                <Icon path="M4 20l8-16 8 16" stroke={theme.brandDark} />
+                Move and Attack
+              </div>
+
+              {!active || !hero ? (
+                <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
+              ) : !allowed.has(ActionType.MOVE) || apRemaining <= 0 ? (
+                <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
+              ) : (
+                <>
+                  <div style={{ ...mono, color: theme.sub, marginBottom: 10, fontSize: 12 }}>
+                    Tap green to move. Tap red enemy to attack.
+                  </div>
+
+                  <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
+                    <div style={{ position: "absolute", left: 95, top: 80, width: MINI_HEX_W, height: MINI_HEX_H, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1e4970" }}>
+                      <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
+                        <polygon points={MINI_HEX_POINTS} fill="#f2f7fd" stroke="#9ab3ca" strokeWidth="1.2" />
+                      </svg>
+                      <div style={{ position: "relative" }}>YOU</div>
+                    </div>
+
+                    {(() => {
+                      const xStep = MINI_HEX_W * 0.75;
+                      const yStep = MINI_HEX_H;
+                      const centerLeft = 95;
+                      const centerTop = 80;
+                      const heroParityOffset = (hero.x % 2 === 0) ? 0 : (yStep / 2);
+
+                      return neighborCells.map((c) => {
+                        const cParityOffset = (c.x % 2 === 0) ? 0 : (yStep / 2);
+                        const left = centerLeft + ((c.x - hero.x) * xStep);
+                        const top = centerTop + ((c.y - hero.y) * yStep) + (cParityOffset - heroParityOffset);
+
+                        const hasEnemy = enemy && enemy.hp > 0 && enemy.x === c.x && enemy.y === c.y;
+                        const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
+                        const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
+                        const canTap = c.canMove || canAttack;
+
+                        const bg = !c.inBounds
+                          ? "#f5f7f9"
+                          : hasEnemy
+                            ? "#fde7e7"
+                            : otherHero
+                              ? "#eef1f5"
+                              : c.canMove
+                                ? "#e7f6eb"
+                                : "#fff";
+
+                        const stroke = hasEnemy ? "#e16e6e" : c.canMove ? "#6bb785" : "#bcc8d6";
+                        const label = !c.inBounds ? "" : hasEnemy ? "EN" : otherHero ? "AL" : c.canMove ? "GO" : "";
+
+                        return (
+                          <button
+                            key={`${c.x},${c.y}`}
+                            disabled={!canTap}
+                            onClick={() => (canAttack ? sendAction(ActionType.ATTACK) : sendMove(c.x, c.y))}
+                            style={{
+                              position: "absolute",
+                              left,
+                              top,
+                              width: MINI_HEX_W,
+                              height: MINI_HEX_H,
+                              border: "none",
+                              background: "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              padding: 0,
+                              fontWeight: 800,
+                              fontSize: 12,
+                              letterSpacing: 0.6,
+                              color: hasEnemy ? theme.danger : c.canMove ? theme.success : "#5f6d7a",
+                              opacity: !c.inBounds ? 0.25 : (hasEnemy || otherHero || c.canMove) ? 1 : 0.45,
+                              cursor: canTap ? "pointer" : "default"
+                            }}
+                          >
+                            <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
+                              <polygon points={MINI_HEX_POINTS} fill={bg} stroke={stroke} strokeWidth="1.2" />
+                            </svg>
+                            <div style={{ position: "relative" }}>{label}</div>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  <div style={{ marginTop: 10, textAlign: "center", color: theme.sub }}>
+                    Actions left: <span style={{ ...mono, color: theme.text }}>{apRemaining}/{apMax}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        {error ? (
+          <div style={{ ...cardStyle, borderColor: "#f3b3b3", background: "#fff4f4", color: "#8d1f1f", whiteSpace: "pre-wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontWeight: 700 }}>
+              <Icon path="M12 9v4 M12 17h.01 M4.93 19h14.14a2 2 0 0 0 1.74-3L13.74 4a2 2 0 0 0-3.48 0L3.19 16a2 2 0 0 0 1.74 3z" stroke={theme.danger} />
+              Error
+            </div>
+            {error}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
