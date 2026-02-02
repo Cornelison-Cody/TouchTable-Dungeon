@@ -5,6 +5,7 @@ import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js"
 import {
 
   ActionType,
+  hexNeighbors,
   makeInitialGameState,
   manhattan,
   nextActivePlayer,
@@ -190,22 +191,54 @@ export function setupWebSocket(server) {
     return false;
   }
 
-  function enemyAutoAttack() {
+  function enemyTakeTurn() {
     if (!game) return;
     if (game.enemy.hp <= 0) return;
 
-    const adj = Object.values(game.heroes).filter((h) => isHeroAlive(h) && manhattan(h, game.enemy) <= game.rules.attackRange);
-    if (!adj.length) {
-      game.log.push({ at: Date.now(), msg: "Enemy waits." });
+    const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h));
+    if (!aliveHeroes.length) return;
+
+    const inRange = aliveHeroes.filter((h) => manhattan(h, game.enemy) <= game.rules.attackRange);
+    if (inRange.length) {
+      const target = [...inRange].sort((a, b) => a.hp - b.hp || manhattan(a, game.enemy) - manhattan(b, game.enemy))[0];
+
+      target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
+      game.log.push({ at: Date.now(), msg: `Enemy hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
+      if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
       return;
     }
 
-    const activeHero = game.turn.activePlayerId ? game.heroes[game.turn.activePlayerId] : null;
-    const target = activeHero && adj.find((h) => h.ownerPlayerId === activeHero.ownerPlayerId) ? activeHero : adj[0];
+    const inBounds = (x, y) => x >= 0 && y >= 0 && x < game.grid.w && y < game.grid.h;
+    const occupiedByLiveHero = (x, y) => aliveHeroes.some((h) => h.x === x && h.y === y);
+    const nearestHeroDistance = (pos) => {
+      let best = Number.POSITIVE_INFINITY;
+      for (const h of aliveHeroes) best = Math.min(best, manhattan(pos, h));
+      return best;
+    };
 
-    target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
-    game.log.push({ at: Date.now(), msg: `Enemy hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
-    if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
+    const currentDist = nearestHeroDistance(game.enemy);
+    const candidates = hexNeighbors(game.enemy.x, game.enemy.y)
+      .filter((p) => inBounds(p.x, p.y))
+      .filter((p) => !occupiedByLiveHero(p.x, p.y));
+
+    let bestStep = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const p of candidates) {
+      const d = nearestHeroDistance(p);
+      if (d < bestDist || (d === bestDist && (bestStep === null || p.y < bestStep.y || (p.y === bestStep.y && p.x < bestStep.x)))) {
+        bestDist = d;
+        bestStep = p;
+      }
+    }
+
+    if (bestStep && bestDist < currentDist) {
+      game.enemy.x = bestStep.x;
+      game.enemy.y = bestStep.y;
+      game.log.push({ at: Date.now(), msg: `Enemy moves to (${bestStep.x},${bestStep.y}).` });
+      return;
+    }
+
+    game.log.push({ at: Date.now(), msg: "Enemy waits." });
   }
 
   function handleMove(ws, id, actorPlayerId, params) {
@@ -259,7 +292,7 @@ export function setupWebSocket(server) {
     if (!requireActive(ws, id, actorPlayerId)) return;
 
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
-    enemyAutoAttack();
+    enemyTakeTurn();
 
     const next = nextActivePlayer(game);
     game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No heroes left standing." });
