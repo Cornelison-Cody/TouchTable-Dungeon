@@ -234,7 +234,7 @@ export default function App() {
             ) : (
               <>
                 <div style={{ ...mono, opacity: 0.8, marginBottom: 10 }}>
-                  Tap a highlighted hex to move (costs 1 action).
+                  Tap a highlighted hex to move, or tap the enemy hex to attack.
                 </div>
 
                 <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
@@ -276,6 +276,8 @@ export default function App() {
                       const top = centerTop + ((c.y - hero.y) * yStep) + (cParityOffset - heroParityOffset);
                       const hasEnemy = enemy && enemy.hp > 0 && enemy.x === c.x && enemy.y === c.y;
                       const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
+                      const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
+                      const canTap = c.canMove || canAttack;
 
                       const label = !c.inBounds
                         ? ""
@@ -302,8 +304,8 @@ export default function App() {
                       return (
                         <button
                           key={`${c.x},${c.y}`}
-                          disabled={!c.canMove}
-                          onClick={() => sendMove(c.x, c.y)}
+                          disabled={!canTap}
+                          onClick={() => (canAttack ? sendAction(ActionType.ATTACK) : sendMove(c.x, c.y))}
                           style={{
                             position: "absolute",
                             left,
@@ -318,7 +320,7 @@ export default function App() {
                             justifyContent: "center",
                             fontSize: 18,
                             padding: 0,
-                            cursor: c.canMove ? "pointer" : "default"
+                            cursor: canTap ? "pointer" : "default"
                           }}
                         >
                           <svg
@@ -345,13 +347,6 @@ export default function App() {
           </div>
           <div style={cardStyle}>
             <h2 style={{ marginTop: 0 }}>Actions</h2>
-            <button
-              disabled={!active || !allowed.has(ActionType.ATTACK)}
-              onClick={() => sendAction(ActionType.ATTACK)}
-              style={{ width: "100%", padding: 14, borderRadius: 12, border: "1px solid #ccc", background: "#fff", opacity: !active ? 0.6 : 1, marginBottom: 10 }}
-            >
-              Attack (melee)
-            </button>
             <button
               disabled={!active || !allowed.has(ActionType.END_TURN)}
               onClick={() => sendAction(ActionType.END_TURN)}
