@@ -4,8 +4,71 @@ export const ActionType = Object.freeze({
   END_TURN: "END_TURN"
 });
 
+// Hex grid helpers (even-q vertical layout):
+// - Coordinates are stored as (x,y) where x is column, y is row.
+// - Neighbor offsets depend on x parity (even-q).
+
+function offsetToCube(x, y) {
+  const q = x;
+  const r = y - Math.floor((x + 0) / 2);
+  const cx = q;
+  const cz = r;
+  const cy = -cx - cz;
+  return { x: cx, y: cy, z: cz };
+}
+
+export function hexDistance(a, b) {
+  const ac = offsetToCube(a.x, a.y);
+  const bc = offsetToCube(b.x, b.y);
+  return Math.max(Math.abs(ac.x - bc.x), Math.abs(ac.y - bc.y), Math.abs(ac.z - bc.z));
+}
+
+// Back-compat name used elsewhere in the codebase.
 export function manhattan(a, b) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  return hexDistance(a, b);
+}
+
+export function hexNeighbors(x, y) {
+  const even = (x % 2) === 0;
+  const dirsEven = [
+    { dx: +1, dy: 0 },
+    { dx: +1, dy: -1 },
+    { dx: 0, dy: -1 },
+    { dx: -1, dy: -1 },
+    { dx: -1, dy: 0 },
+    { dx: 0, dy: +1 }
+  ];
+  const dirsOdd = [
+    { dx: +1, dy: +1 },
+    { dx: +1, dy: 0 },
+    { dx: 0, dy: -1 },
+    { dx: -1, dy: 0 },
+    { dx: -1, dy: +1 },
+    { dx: 0, dy: +1 }
+  ];
+  const dirs = even ? dirsEven : dirsOdd;
+  return dirs.map((d) => ({ x: x + d.dx, y: y + d.dy }));
+}
+
+export function hexWithinRange(start, range, inBounds, isBlocked) {
+  const key = (p) => `${p.x},${p.y}`;
+  const q = [{ x: start.x, y: start.y, dist: 0 }];
+  const seen = new Set([key(start)]);
+  const out = new Set();
+  while (q.length) {
+    const cur = q.shift();
+    if (cur.dist >= range) continue;
+    for (const n of hexNeighbors(cur.x, cur.y)) {
+      const k = key(n);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!inBounds(n.x, n.y)) continue;
+      const blocked = isBlocked ? isBlocked(n.x, n.y) : false;
+      if (!blocked) out.add(k);
+      if (!blocked) q.push({ x: n.x, y: n.y, dist: cur.dist + 1 });
+    }
+  }
+  return out;
 }
 
 export function makeInitialGameState(firstPlayerId) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
-import { ActionType } from "../../shared/game.js";
+import { ActionType, hexWithinRange } from "../../shared/game.js";
 
 const cardStyle = {
   border: "1px solid #ddd",
@@ -118,22 +118,17 @@ export default function App() {
 
   const moveOptions = new Set();
   if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
-    for (let dx = -moveRange; dx <= moveRange; dx++) {
-      for (let dy = -moveRange; dy <= moveRange; dy++) {
-        const dist = Math.abs(dx) + Math.abs(dy);
-        if (dist === 0 || dist > moveRange) continue;
-        const nx = activeHero.x + dx;
-        const ny = activeHero.y + dy;
-        if (nx < 0 || ny < 0 || nx >= grid.w || ny >= grid.h) continue;
-        // can't move onto any occupied tile
-        if (occupied.has(`${nx},${ny}`)) continue;
-        moveOptions.add(`${nx},${ny}`);
-      }
-    }
+    const inBounds = (x, y) => x >= 0 && y >= 0 && x < grid.w && y < grid.h;
+    const isBlocked = (x, y) => occupied.has(`${x},${y}`);
+    const opts = hexWithinRange({ x: activeHero.x, y: activeHero.y }, moveRange, inBounds, isBlocked);
+    for (const k of opts) moveOptions.add(k);
   }
 
 
-  const cellSize = 64;
+  const HEX_SIZE = 34;
+  const HEX_W = HEX_SIZE * 2;
+  const HEX_H = Math.sqrt(3) * HEX_SIZE;
+
 
   function tryMove(toX, toY) {
     const ws = wsRef.current;
@@ -142,7 +137,16 @@ export default function App() {
   }
 
   function heroGlyph(h) {
-    return `🧙 ${h.ownerPlayerId.slice(0, 2)}`;
+    const name = h.ownerPlayerName || "";
+    const initials = name
+      ? name
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((s) => s[0].toUpperCase())
+          .join("")
+      : (h.ownerPlayerId || "").slice(0, 2).toUpperCase();
+    return `🧙 ${initials}`;
   }
 
   return (
@@ -226,34 +230,80 @@ export default function App() {
 
         <div style={cardStyle}>
           <h2 style={{ marginTop: 0 }}>Board</h2>
+          <div style={{ ...mono, opacity: 0.75, marginBottom: 10 }}>
+            Hex grid • view-only
+          </div>
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${grid.w}, ${cellSize}px)`,
-              width: grid.w * cellSize,
+              position: "relative",
+              width: (grid.w - 1) * (HEX_SIZE * 1.5) + HEX_SIZE * 2,
+              height: grid.h * HEX_H + HEX_H / 2,
               touchAction: "manipulation"
             }}
           >
             {Array.from({ length: grid.h }).map((_, y) =>
               Array.from({ length: grid.w }).map((__, x) => {
-                const isDark = (x + y) % 2 === 1;
                 const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
                 const isEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
                 const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
 
+                const left = x * (HEX_SIZE * 1.5);
+                const top = y * HEX_H + (x % 2 === 0 ? 0 : HEX_H / 2);
+
                 const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "👾" : "";
+                const isMoveOption = moveOptions.has(`${x},${y}`);
+
+                const bg = isEnemy
+                  ? "rgba(255,0,0,0.06)"
+                  : isActiveCell
+                    ? "rgba(0,128,0,0.08)"
+                    : "rgba(255,255,255,1)";
+
+                const stroke = isActiveCell ? "rgba(0,0,0,0.55)" : "rgba(0,0,0,0.18)";
+                const strokeWidth = isActiveCell ? 2 : 1;
 
                 return (
-                  <Cell
+                  <div
                     key={`${x},${y}`}
-                    size={cellSize}
-                    isDark={isDark}
-                    isActive={Boolean(isActiveCell)}
-                    isMoveOption={moveOptions.has(`${x},${y}`)}
-                    onClick={undefined}
+                    style={{
+                      position: "absolute",
+                      left,
+                      top,
+                      width: HEX_W,
+                      height: HEX_H,
+                      pointerEvents: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      userSelect: "none",
+                      fontSize: 14,
+                      padding: 6
+                    }}
                   >
-                    {label}
-                  </Cell>
+                    <svg
+                      width={HEX_W}
+                      height={HEX_H}
+                      viewBox={`0 0 ${HEX_W} ${HEX_H}`}
+                      aria-hidden="true"
+                      style={{ position: "absolute", inset: 0 }}
+                    >
+                      <polygon
+                        points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                        fill={bg}
+                        stroke={stroke}
+                        strokeWidth={strokeWidth}
+                      />
+                      {isMoveOption ? (
+                        <polygon
+                          points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                          fill="none"
+                          stroke="rgba(0, 128, 0, 0.35)"
+                          strokeWidth="3"
+                        />
+                      ) : null}
+                    </svg>
+                    <div style={{ position: "relative", textAlign: "center", lineHeight: 1.1 }}>{label}</div>
+                  </div>
                 );
               })
             )}

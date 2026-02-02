@@ -7,3 +7,6 @@ Simpler movement controls on phone: D-pad + mini 3x3 move preview.
 
 ## Milestone 7b
 Removed D-pad, removed coordinate text, and shows nearby entities in 3x3 grid.
+
+## Milestone 8
+Hex movement ring UI + shows nearby hero/enemy; no coordinates.

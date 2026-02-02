@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
 import {
+
   ActionType,
   makeInitialGameState,
   manhattan,
@@ -12,6 +13,9 @@ import {
   ensurePlayerInTurnOrder,
   isHeroAlive
 } from "../shared/game.js";
+
+const BUILD_TAG = "m8h";
+
 
 function getLanAddress() {
   const nets = os.networkInterfaces();
@@ -50,6 +54,18 @@ export function setupWebSocket(server) {
 
   const clients = new Map(); // ws -> { clientId, role, playerId?, seat? }
 
+  function shortName(pid) {
+    const s = session.seats.find((x) => x.playerId === pid);
+    return s?.playerName || pid.slice(0, 4);
+  }
+
+  function isPlayerConnected(playerId) {
+    for (const info of clients.values()) {
+      if (info.role === Role.PHONE && info.playerId === playerId) return true;
+    }
+    return false;
+  }
+
   function send(ws, msg) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   }
@@ -68,7 +84,7 @@ export function setupWebSocket(server) {
       game = makeInitialGameState(playerId);
       resetTurnAP(game);
       game.log.push({ at: Date.now(), msg: "Encounter started." });
-      game.log.push({ at: Date.now(), msg: `Turn: ${playerId.slice(0, 4)}.` });
+      game.log.push({ at: Date.now(), msg: `Turn: ${shortName(playerId)}.` });
     } else {
       ensurePlayerInTurnOrder(game, playerId);
     }
@@ -76,6 +92,7 @@ export function setupWebSocket(server) {
   }
 
   function computePublicState() {
+    const nameById = new Map(session.seats.filter((s) => s.playerId).map((s) => [s.playerId, s.playerName]));
     return {
       sessionId: session.sessionId,
       seats: session.seats.map((s) => ({
@@ -87,9 +104,10 @@ export function setupWebSocket(server) {
       game: game
         ? {
             grid: game.grid,
-            turn: { activePlayerId: game.turn.activePlayerId, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
+            turn: { activePlayerId: game.turn.activePlayerId, activePlayerName: nameById.get(game.turn.activePlayerId) || null, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
             heroes: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
+              ownerPlayerName: nameById.get(h.ownerPlayerId) || null,
               x: h.x,
               y: h.y,
               hp: h.hp,
@@ -122,6 +140,7 @@ export function setupWebSocket(server) {
             },
             heroesPublic: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
+              ownerPlayerName: session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName || null,
               x: h.x,
               y: h.y,
               hp: h.hp,
@@ -185,8 +204,8 @@ export function setupWebSocket(server) {
     const target = activeHero && adj.find((h) => h.ownerPlayerId === activeHero.ownerPlayerId) ? activeHero : adj[0];
 
     target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
-    game.log.push({ at: Date.now(), msg: `Enemy hits ${target.ownerPlayerId.slice(0, 4)} for ${game.rules.enemyDamage}.` });
-    if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${target.ownerPlayerId.slice(0, 4)} is down!` });
+    game.log.push({ at: Date.now(), msg: `Enemy hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
+    if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
   }
 
   function handleMove(ws, id, actorPlayerId, params) {
@@ -203,14 +222,14 @@ export function setupWebSocket(server) {
     const nx = clamp(Math.floor(toX), 0, game.grid.w - 1);
     const ny = clamp(Math.floor(toY), 0, game.grid.h - 1);
 
-    const dist = Math.abs(nx - hero.x) + Math.abs(ny - hero.y);
+    const dist = manhattan({ x: nx, y: ny }, hero);
     if (dist > game.rules.moveRange) return reject(ws, id, "OUT_OF_RANGE", `Move too far (range ${game.rules.moveRange}).`);
 
     if (nx === game.enemy.x && ny === game.enemy.y && game.enemy.hp > 0) return reject(ws, id, "BLOCKED", "Cell occupied by enemy.");
     if (cellOccupiedByOtherHero(nx, ny, actorPlayerId)) return reject(ws, id, "BLOCKED", "Cell occupied by another hero.");
 
     hero.x = nx; hero.y = ny;
-    game.log.push({ at: Date.now(), msg: `Hero ${actorPlayerId.slice(0, 4)} moves to (${nx},${ny}).` });
+    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} moves to (${nx},${ny}).` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
@@ -228,7 +247,7 @@ export function setupWebSocket(server) {
     if (dist > game.rules.attackRange) return reject(ws, id, "OUT_OF_RANGE", `Enemy out of range (range ${game.rules.attackRange}).`);
 
     game.enemy.hp = clamp(game.enemy.hp - game.rules.heroDamage, 0, game.enemy.maxHp);
-    game.log.push({ at: Date.now(), msg: `Hero ${actorPlayerId.slice(0, 4)} attacks for ${game.rules.heroDamage}.` });
+    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks for ${game.rules.heroDamage}.` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     if (game.enemy.hp <= 0) game.log.push({ at: Date.now(), msg: "Enemy defeated!" });
 
@@ -239,11 +258,11 @@ export function setupWebSocket(server) {
   function handleEndTurn(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
 
-    game.log.push({ at: Date.now(), msg: `Hero ${actorPlayerId.slice(0, 4)} ends turn.` });
+    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
     enemyAutoAttack();
 
     const next = nextActivePlayer(game);
-    game.log.push({ at: Date.now(), msg: next ? `Turn: ${next.slice(0, 4)}.` : "No heroes left standing." });
+    game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No heroes left standing." });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
@@ -263,14 +282,46 @@ export function setupWebSocket(server) {
   }
 
   wss.on("connection", (ws) => {
+    console.log(`[ws] connection open (build ${BUILD_TAG})`);
     const clientId = uuid();
     clients.set(ws, { clientId, role: null, playerId: null, seat: null });
 
-    ws.on("message", (data) => {
+    ws.on("message", (data, isBinary) => {
+      // Some environments/extensions can emit non-JSON frames. We ignore obviously-non-JSON payloads
+      // and log a small snippet for debugging.
+      let text = "";
       try {
-        handleMessage(ws, JSON.parse(data.toString()));
+        text = isBinary ? Buffer.from(data).toString("utf8") : data.toString();
       } catch {
-        send(ws, makeMsg(MsgType.ERROR, { code: "BAD_JSON", message: "Bad JSON" }));
+        text = "<unreadable>";
+      }
+      const trimmed = (text || "").trim();
+      if (!trimmed) return;
+      if (trimmed === "ping" || trimmed === "pong") return;
+
+      let msg;
+      try {
+        msg = JSON.parse(trimmed);
+      } catch (err) {
+        const snippet = trimmed.length > 200 ? trimmed.slice(0, 200) + "…" : trimmed;
+        console.error("[ws] BAD_JSON_PARSE", "binary=", !!isBinary, "snippet=", snippet, "build=", BUILD_TAG);
+        send(ws, makeMsg(MsgType.ERROR, { code: "BAD_JSON", message: `Bad JSON (parse) (build ${BUILD_TAG})`, snippet }, "bad-json"));
+        return;
+      }
+
+      try {
+        handleMessage(ws, msg);
+      } catch (err) {
+        const snippet = trimmed.length > 200 ? trimmed.slice(0, 200) + "…" : trimmed;
+        console.error("[ws] HANDLE_MESSAGE_ERROR", err?.stack || err, "snippet=", snippet, "build=", BUILD_TAG);
+        send(
+          ws,
+          makeMsg(
+            MsgType.ERROR,
+            { code: "SERVER_ERROR", message: `Server error while handling message (build ${BUILD_TAG}): ${err?.message || err}`, snippet },
+            "server-error"
+          )
+        );
       }
     });
 
@@ -317,15 +368,44 @@ export function setupWebSocket(server) {
     if (msg.t === MsgType.JOIN) {
       if (info.role !== Role.PHONE) return reject(ws, msg.id, "NOT_PHONE", "Only phones can JOIN");
       const playerName = (msg.payload?.playerName ?? "").toString().trim().slice(0, 32);
+      const requestedSeat = Number(msg.payload?.seat);
       if (!playerName) return reject(ws, msg.id, "BAD_NAME", "playerName required");
 
       if (info.playerId) {
-        send(ws, makeMsg(MsgType.OK, { playerId: info.playerId, seat: info.seat }, msg.id));
+        // already joined (e.g., resumed via token)
+        send(ws, makeMsg(MsgType.OK, { playerId: info.playerId, seat: info.seat, resumeToken: session.seats.find((s)=>s.playerId===info.playerId)?.resumeToken || undefined }, msg.id));
         emitViews();
         return;
       }
 
-      const requestedSeat = Number(msg.payload?.seat);
+      // RECLAIM: if a seat is already occupied by the same name but the prior client is gone,
+      // allow the player to reclaim that seat (useful if localStorage token was lost or a first-join glitch happened).
+      const nameKey = playerName.toLowerCase();
+      const canReclaim = (s) => !!s && s.occupied && (s.playerName || "").toLowerCase() === nameKey && !isPlayerConnected(s.playerId);
+      let reclaimSeat = null;
+      if (Number.isFinite(requestedSeat) && requestedSeat >= 1 && requestedSeat <= session.seats.length) {
+        const cand = session.seats[requestedSeat - 1];
+        if (canReclaim(cand)) reclaimSeat = cand;
+      }
+      if (!reclaimSeat) {
+        const byName = session.seats.find((s) => canReclaim(s)) || null;
+        if (byName) reclaimSeat = byName;
+      }
+      if (reclaimSeat) {
+        const token = uuid();
+        reclaimSeat.resumeToken = token;
+        info.playerId = reclaimSeat.playerId;
+        info.seat = reclaimSeat.seat;
+        // Make sure the game has a hero for this player.
+        ensureGameFor(reclaimSeat.playerId, reclaimSeat.seat - 1);
+        send(ws, makeMsg(MsgType.OK, { playerId: reclaimSeat.playerId, seat: reclaimSeat.seat, resumeToken: token, reclaimed: true }, msg.id));
+        emitViews();
+        return;
+      }
+
+      // normal seat selection
+      
+
       let seatObj = null;
       if (Number.isFinite(requestedSeat) && requestedSeat >= 1 && requestedSeat <= session.seats.length) {
         const candidate = session.seats[requestedSeat - 1];
