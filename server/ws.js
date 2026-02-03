@@ -151,6 +151,15 @@ export function setupWebSocket(server) {
             enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
             apRemaining: game.turn.apRemaining,
             apMax: game.turn.apMax,
+            lastHeroDamage:
+              game.lastHeroDamage && game.lastHeroDamage.actorPlayerId === playerId
+                ? {
+                    amount: game.lastHeroDamage.amount,
+                    enemyHp: game.lastHeroDamage.enemyHp,
+                    enemyMaxHp: game.lastHeroDamage.enemyMaxHp,
+                    at: game.lastHeroDamage.at
+                  }
+                : null,
             allowedActions:
               isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
                 ? [ActionType.MOVE, ActionType.ATTACK, ActionType.END_TURN]
@@ -279,7 +288,16 @@ export function setupWebSocket(server) {
     const dist = manhattan(hero, game.enemy);
     if (dist > game.rules.attackRange) return reject(ws, id, "OUT_OF_RANGE", `Enemy out of range (range ${game.rules.attackRange}).`);
 
+    const enemyHpBefore = game.enemy.hp;
     game.enemy.hp = clamp(game.enemy.hp - game.rules.heroDamage, 0, game.enemy.maxHp);
+    const dealt = enemyHpBefore - game.enemy.hp;
+    game.lastHeroDamage = {
+      actorPlayerId,
+      amount: dealt,
+      enemyHp: game.enemy.hp,
+      enemyMaxHp: game.enemy.maxHp,
+      at: Date.now()
+    };
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks for ${game.rules.heroDamage}.` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     if (game.enemy.hp <= 0) game.log.push({ at: Date.now(), msg: "Enemy defeated!" });

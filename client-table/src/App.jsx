@@ -50,8 +50,12 @@ export default function App() {
   const [sessionInfo, setSessionInfo] = useState(null);
   const [publicState, setPublicState] = useState(null);
   const [error, setError] = useState(null);
+  const [tableHitFx, setTableHitFx] = useState(null);
+  const [audioReady, setAudioReady] = useState(false);
 
   const wsRef = useRef(null);
+  const prevEnemyHpRef = useRef(null);
+  const audioCtxRef = useRef(null);
 
   useEffect(() => {
     setError(null);
@@ -95,6 +99,81 @@ export default function App() {
     setWsUrl(wsUrl.trim());
   }
 
+  function ensureAudioContext() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+    return audioCtxRef.current;
+  }
+
+  function unlockAudio() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "running") {
+      setAudioReady(true);
+      return;
+    }
+    ctx.resume().then(() => {
+      setAudioReady(ctx.state === "running");
+    }).catch(() => {});
+  }
+
+  function playHitSound() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    if (ctx.state !== "running") {
+      unlockAudio();
+      return;
+    }
+    setAudioReady(true);
+    const t = ctx.currentTime;
+
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-28, t);
+    compressor.knee.setValueAtTime(24, t);
+    compressor.ratio.setValueAtTime(10, t);
+    compressor.attack.setValueAtTime(0.003, t);
+    compressor.release.setValueAtTime(0.14, t);
+
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(1.25, t);
+    master.connect(compressor).connect(ctx.destination);
+
+    const strike = (start, f0, f1, peak, type, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, start);
+      osc.frequency.exponentialRampToValueAtTime(f1, start + dur);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peak, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+      osc.connect(gain).connect(master);
+      osc.start(start);
+      osc.stop(start + dur + 0.02);
+    };
+
+    strike(t, 360, 120, 0.65, "triangle", 0.19);
+    strike(t + 0.065, 300, 100, 0.5, "sawtooth", 0.16);
+    strike(t, 95, 70, 0.22, "square", 0.2);
+
+    const noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.09), ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.5;
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = "highpass";
+    noiseFilter.frequency.setValueAtTime(1000, t);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    noise.connect(noiseFilter).connect(noiseGain).connect(master);
+    noise.start(t);
+    noise.stop(t + 0.1);
+  }
+
   const joinUrl = sessionInfo?.joinUrl || "";
   const game = publicState?.game || null;
   const grid = game?.grid || { w: 10, h: 7 };
@@ -107,6 +186,44 @@ export default function App() {
   const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
 
   const enemyHpText = enemy ? `${enemy.hp}/${enemy.maxHp}` : "—";
+
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+    window.addEventListener("touchstart", unlockAudio);
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextEnemy = publicState?.game?.enemy;
+    if (!nextEnemy) {
+      prevEnemyHpRef.current = null;
+      return;
+    }
+
+    const prevHp = prevEnemyHpRef.current;
+    const nextHp = nextEnemy.hp;
+    let timeoutId = null;
+
+    if (typeof prevHp === "number" && nextHp < prevHp) {
+      const amount = prevHp - nextHp;
+      const fx = { id: Date.now(), x: nextEnemy.x, y: nextEnemy.y, amount };
+      setTableHitFx(fx);
+      playHitSound();
+      timeoutId = setTimeout(() => {
+        setTableHitFx((curr) => (curr && curr.id === fx.id ? null : curr));
+      }, 900);
+    }
+
+    prevEnemyHpRef.current = nextHp;
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [publicState]);
 
   const moveRange = game?.rules?.moveRange ?? 1;
 
@@ -151,6 +268,16 @@ export default function App() {
 
   return (
     <div style={{ padding: 20, maxWidth: 1300, margin: "0 auto", background: "#f6f7f9", minHeight: "100vh" }}>
+      <style>{`
+        @keyframes tvHitPulse {
+          0% { transform: scale(1); opacity: 1; }
+          100% { transform: scale(1.1); opacity: 0; }
+        }
+        @keyframes tvHitFloat {
+          0% { transform: translateY(0); opacity: 1; }
+          100% { transform: translateY(-22px); opacity: 0; }
+        }
+      `}</style>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <h1 style={{ margin: 0 }}>TouchTable Dungeon — Table</h1>
         <div style={{ ...mono, opacity: 0.8 }}>
@@ -164,8 +291,6 @@ export default function App() {
             <h2 style={{ marginTop: 0 }}>Session</h2>
             {sessionInfo ? (
               <>
-                <div style={mono}>sessionId: {sessionInfo.sessionId}</div>
-                <div style={{ ...mono, wordBreak: "break-all", marginTop: 8 }}>joinUrl: {sessionInfo.joinUrl}</div>
                 <div style={{ marginTop: 12 }}>
                   <QRCodeCanvas value={joinUrl} size={240} includeMargin />
                 </div>
@@ -204,6 +329,27 @@ export default function App() {
                 </div>
                 <div style={{ marginTop: 8, opacity: 0.9 }}>
                   Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
+                </div>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      unlockAudio();
+                      playHitSound();
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      cursor: "pointer",
+                      fontWeight: 600
+                    }}
+                  >
+                    Test Hit Sound
+                  </button>
+                  <span style={{ ...mono, fontSize: 12, opacity: 0.7 }}>
+                    SFX: {audioReady ? "ready" : "tap to enable"}
+                  </span>
                 </div>
                 <p style={{ marginBottom: 0, opacity: 0.75 }}>
                   Movement is controlled from the active player’s phone. Table is view-only.
@@ -252,6 +398,7 @@ export default function App() {
 
                 const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "👾" : "";
                 const isMoveOption = moveOptions.has(`${x},${y}`);
+                const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
 
                 const bg = isEnemy
                   ? "rgba(255,0,0,0.06)"
@@ -301,8 +448,34 @@ export default function App() {
                           strokeWidth="3"
                         />
                       ) : null}
+                      {isHitCell ? (
+                        <polygon
+                          points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                          fill="none"
+                          stroke="rgba(210, 30, 30, 0.85)"
+                          strokeWidth="4"
+                          style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.65s ease-out forwards" }}
+                        />
+                      ) : null}
                     </svg>
                     <div style={{ position: "relative", textAlign: "center", lineHeight: 1.1 }}>{label}</div>
+                    {isHitCell ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: -8,
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          background: "rgba(255,255,255,0.95)",
+                          border: "1px solid rgba(210, 30, 30, 0.25)",
+                          color: "#c21f1f",
+                          fontWeight: 800,
+                          animation: "tvHitFloat 0.9s ease-out forwards"
+                        }}
+                      >
+                        -{tableHitFx.amount}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })

@@ -81,11 +81,13 @@ export default function App() {
   const [player, setPlayer] = useState(null);
   const [privateState, setPrivateState] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [damageFx, setDamageFx] = useState(null);
 
   const resumeToken = useMemo(() => localStorage.getItem("tt_resume_token") || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
 
   const wsRef = useRef(null);
+  const seenDamageAtRef = useRef(0);
 
   useEffect(() => {
     setError(null);
@@ -182,13 +184,14 @@ export default function App() {
 
   const inBounds = (x, y) => x >= 0 && y >= 0 && x < grid.w && y < grid.h;
 
+  const canSpendMove = allowed.has(ActionType.MOVE) && apRemaining > 0;
   const neighborCells =
-    active && hero && hero.hp > 0 && allowed.has(ActionType.MOVE) && apRemaining > 0
+    active && hero && hero.hp > 0 && (canSpendMove || Boolean(damageFx))
       ? hexNeighbors(hero.x, hero.y).map((c) => ({
           x: c.x,
           y: c.y,
           inBounds: inBounds(c.x, c.y),
-          canMove: inBounds(c.x, c.y) && !occupied.has(`${c.x},${c.y}`)
+          canMove: canSpendMove && inBounds(c.x, c.y) && !occupied.has(`${c.x},${c.y}`)
         }))
       : [];
 
@@ -198,9 +201,35 @@ export default function App() {
 
   const statusTone = status === "connected" ? { bg: "#e9f7ef", color: theme.success } : status === "error" ? { bg: "#ffecec", color: theme.danger } : { bg: "#eef5fb", color: "#365772" };
 
+  useEffect(() => {
+    const hit = privateState?.game?.lastHeroDamage;
+    if (!hit?.at || hit.at <= seenDamageAtRef.current) return;
+    seenDamageAtRef.current = hit.at;
+    const fx = { id: hit.at, amount: hit.amount, enemyHp: hit.enemyHp, enemyMaxHp: hit.enemyMaxHp };
+    setDamageFx(fx);
+    const t = setTimeout(() => {
+      setDamageFx((curr) => (curr && curr.id === fx.id ? null : curr));
+    }, 950);
+    return () => clearTimeout(t);
+  }, [privateState]);
+
   return (
     <div style={shellStyle}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
+        <style>{`
+          @keyframes phoneEnemyHitShake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-2px); }
+            40% { transform: translateX(2px); }
+            60% { transform: translateX(-2px); }
+            80% { transform: translateX(2px); }
+          }
+          @keyframes phoneHitFloat {
+            0% { transform: translate(-50%, 0) scale(0.9); opacity: 0; }
+            18% { transform: translate(-50%, -6px) scale(1); opacity: 1; }
+            100% { transform: translate(-50%, -26px) scale(1); opacity: 0; }
+          }
+        `}</style>
         <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #ffffff, #f8fcff)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.2 }}>Dungeon Phone Console</div>
@@ -329,7 +358,7 @@ export default function App() {
 
               {!active || !hero ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
-              ) : !allowed.has(ActionType.MOVE) || apRemaining <= 0 ? (
+              ) : (!allowed.has(ActionType.MOVE) || apRemaining <= 0) && !damageFx ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
               ) : (
                 <>
@@ -361,6 +390,7 @@ export default function App() {
                         const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
                         const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
                         const canTap = c.canMove || canAttack;
+                        const showDamageFx = Boolean(hasEnemy && damageFx);
 
                         const bg = !c.inBounds
                           ? "#f5f7f9"
@@ -397,13 +427,37 @@ export default function App() {
                               letterSpacing: 0.6,
                               color: hasEnemy ? theme.danger : c.canMove ? theme.success : "#5f6d7a",
                               opacity: !c.inBounds ? 0.25 : (hasEnemy || otherHero || c.canMove) ? 1 : 0.45,
-                              cursor: canTap ? "pointer" : "default"
+                              cursor: canTap ? "pointer" : "default",
+                              transformOrigin: "50% 50%",
+                              animation: showDamageFx ? "phoneEnemyHitShake 0.35s ease-in-out" : "none"
                             }}
                           >
                             <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
                               <polygon points={MINI_HEX_POINTS} fill={bg} stroke={stroke} strokeWidth="1.2" />
                             </svg>
                             <div style={{ position: "relative" }}>{label}</div>
+                            {showDamageFx ? (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  left: "50%",
+                                  top: -4,
+                                  background: "rgba(255, 246, 235, 0.98)",
+                                  color: theme.danger,
+                                  border: "1px solid rgba(210, 69, 69, 0.35)",
+                                  borderRadius: 999,
+                                  padding: "2px 8px",
+                                  fontSize: 11,
+                                  fontWeight: 900,
+                                  letterSpacing: 0.3,
+                                  whiteSpace: "nowrap",
+                                  pointerEvents: "none",
+                                  animation: "phoneHitFloat 0.95s ease-out forwards"
+                                }}
+                              >
+                                -{damageFx.amount} ({damageFx.enemyHp}/{damageFx.enemyMaxHp})
+                              </div>
+                            ) : null}
                           </button>
                         );
                       });
