@@ -96,6 +96,10 @@ export function makeInitialGameState(firstPlayerId) {
     },
     enemy: {
       id: "enemy-1",
+      name: "Rift Stalker",
+      art: "👾",
+      flavor: "A warped predator that lunges from weak points in the veil.",
+      attackPower: 1,
       x: 7,
       y: 4,
       hp: 8,

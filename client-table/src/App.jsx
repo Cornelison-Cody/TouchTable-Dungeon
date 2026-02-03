@@ -46,6 +46,7 @@ export default function App() {
   const [audioReady, setAudioReady] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [kickPrompt, setKickPrompt] = useState(null);
+  const [enemyInspectOpen, setEnemyInspectOpen] = useState(false);
 
   const wsRef = useRef(null);
   const prevEnemyHpRef = useRef(null);
@@ -201,9 +202,10 @@ export default function App() {
   const enemy = game?.enemy || null;
   const log = game?.log || [];
   const activePlayerId = game?.turn?.activePlayerId || null;
+  const apMax = game?.turn?.apMax ?? 0;
   const apRemaining = game?.turn?.apRemaining ?? 0;
+  const enemyCount = enemy && enemy.hp > 0 ? 1 : 0;
   const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
-  const enemyHpText = enemy ? `${enemy.hp}/${enemy.maxHp}` : "-";
 
   useEffect(() => {
     window.addEventListener("pointerdown", unlockAudio);
@@ -220,6 +222,7 @@ export default function App() {
     const nextEnemy = publicState?.game?.enemy;
     if (!nextEnemy) {
       prevEnemyHpRef.current = null;
+      setEnemyInspectOpen(false);
       return;
     }
 
@@ -258,7 +261,7 @@ export default function App() {
     for (const k of opts) moveOptions.add(k);
   }
 
-  const HEX_SIZE = 34;
+  const HEX_SIZE = 42;
   const HEX_W = HEX_SIZE * 2;
   const HEX_H = Math.sqrt(3) * HEX_SIZE;
 
@@ -274,6 +277,19 @@ export default function App() {
       : (hero.ownerPlayerId || "").slice(0, 2).toUpperCase();
     return `H-${initials}`;
   }
+
+  function enemyProfile(enemyUnit) {
+    if (!enemyUnit) return null;
+    return {
+      name: enemyUnit.name || "Unknown Hostile",
+      art: enemyUnit.art || "👹",
+      flavor: enemyUnit.flavor || "A dangerous foe with unstable behavior.",
+      hp: `${enemyUnit.hp}/${enemyUnit.maxHp}`,
+      attackPower: enemyUnit.attackPower ?? game?.rules?.enemyDamage ?? "-"
+    };
+  }
+
+  const viewedEnemy = enemyProfile(enemy);
 
   return (
     <div className="ttd-root">
@@ -329,10 +345,12 @@ export default function App() {
           font-weight: 820;
           letter-spacing: 0.2px;
         }
-        .ttd-subtitle {
-          margin: 3px 0 0;
-          color: var(--ttd-sub);
-          font-size: 0.92rem;
+        .ttd-header-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
         .ttd-status {
           display: inline-flex;
@@ -355,7 +373,7 @@ export default function App() {
         }
         .ttd-layout {
           display: grid;
-          grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+          grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
           gap: 12px;
           align-items: start;
         }
@@ -483,6 +501,7 @@ export default function App() {
           display: flex;
           flex-direction: column;
           gap: 10px;
+          min-height: 78vh;
         }
         .ttd-board-head {
           display: flex;
@@ -491,6 +510,8 @@ export default function App() {
           gap: 8px;
         }
         .ttd-board-scroll {
+          flex: 1;
+          min-height: 68vh;
           overflow: auto;
           border-radius: 12px;
           border: 1px solid rgba(18, 36, 58, 0.11);
@@ -543,6 +564,16 @@ export default function App() {
           margin-bottom: 12px;
           background: #fbfdff;
         }
+        .ttd-enemy-art {
+          border: 1px solid rgba(18, 36, 58, 0.14);
+          border-radius: 14px;
+          background: linear-gradient(140deg, rgba(222, 241, 255, 0.8), rgba(255, 231, 231, 0.8));
+          display: grid;
+          place-items: center;
+          font-size: 72px;
+          height: 148px;
+          margin-bottom: 10px;
+        }
         @media (max-width: 1060px) {
           .ttd-layout {
             grid-template-columns: 1fr;
@@ -562,11 +593,13 @@ export default function App() {
         <header className="ttd-header">
           <div>
             <h1 className="ttd-title">TouchTable Dungeon</h1>
-            <p className="ttd-subtitle">Table Console</p>
           </div>
-          <div className="ttd-status">
-            <span className="ttd-dot" style={{ background: statusColor(status) }} />
-            {status}
+          <div className="ttd-header-meta">
+            <span className="ttd-pill">AP: <span style={mono}>{apRemaining}/{apMax}</span></span>
+            <div className="ttd-status">
+              <span className="ttd-dot" style={{ background: statusColor(status) }} />
+              {status}
+            </div>
           </div>
         </header>
 
@@ -605,6 +638,7 @@ export default function App() {
               <h2 className="ttd-section-title">
                 <Icon path="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M8.5 7a4 4 0 1 0 0 .01 M20 8v6 M17 11h6" />
                 Players
+                <span className="ttd-pill">{heroes.length} heroes</span>
               </h2>
               {publicState?.seats ? (
                 <ul className="ttd-players">
@@ -640,20 +674,12 @@ export default function App() {
               {game ? (
                 <div className="ttd-stat-grid">
                   <div className="ttd-stat">
-                    <label>Active Hero</label>
-                    <strong style={mono}>{activePlayerId ? activePlayerId.slice(0, 4) : "-"}</strong>
+                    <label>Enemies Alive</label>
+                    <strong style={mono}>{enemyCount}</strong>
                   </div>
                   <div className="ttd-stat">
-                    <label>Enemy HP</label>
-                    <strong style={{ ...mono, color: "#c33939" }}>{enemyHpText}</strong>
-                  </div>
-                  <div className="ttd-stat">
-                    <label>Heroes</label>
-                    <strong style={mono}>{heroes.length}</strong>
-                  </div>
-                  <div className="ttd-stat">
-                    <label>Round AP</label>
-                    <strong style={mono}>{game.turn?.apRemaining ?? 0}</strong>
+                    <label>HP Display</label>
+                    <strong style={mono}>On Board</strong>
                   </div>
                 </div>
               ) : (
@@ -681,7 +707,14 @@ export default function App() {
             </section>
           </div>
 
-          <section style={panelStyle} className="ttd-board-shell">
+          <section
+            style={{
+              ...panelStyle,
+              border: "1px solid rgba(15, 143, 147, 0.24)",
+              boxShadow: "0 22px 48px rgba(7, 31, 54, 0.16)"
+            }}
+            className="ttd-board-shell"
+          >
             <div className="ttd-board-head">
               <h2 className="ttd-section-title" style={{ marginBottom: 0 }}>
                 <Icon path="M3 6h18 M3 12h18 M3 18h18 M6 3v18 M12 3v18 M18 3v18" />
@@ -724,13 +757,17 @@ export default function App() {
                     return (
                       <div
                         key={`${x},${y}`}
+                        onClick={() => {
+                          if (isEnemy) setEnemyInspectOpen(true);
+                        }}
+                        title={isEnemy ? "Show enemy details" : undefined}
                         style={{
                           position: "absolute",
                           left,
                           top,
                           width: HEX_W,
                           height: HEX_H,
-                          pointerEvents: "none",
+                          pointerEvents: isEnemy ? "auto" : "none",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -738,7 +775,8 @@ export default function App() {
                           fontSize: 12,
                           padding: 6,
                           color: "#123355",
-                          fontWeight: 800
+                          fontWeight: 800,
+                          cursor: isEnemy ? "pointer" : "default"
                         }}
                       >
                         <svg
@@ -772,7 +810,9 @@ export default function App() {
                             />
                           ) : null}
                         </svg>
-                        <div style={{ position: "relative", textAlign: "center", lineHeight: 1.1 }}>{label}</div>
+                        <div style={{ position: "relative", textAlign: "center", lineHeight: 1.05 }}>
+                          <div>{label}</div>
+                        </div>
                         {isHitCell ? (
                           <div
                             style={{
@@ -799,6 +839,32 @@ export default function App() {
           </section>
         </div>
       </div>
+
+      {enemyInspectOpen ? (
+        <div className="ttd-modal-backdrop" onClick={() => setEnemyInspectOpen(false)}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            {viewedEnemy ? (
+              <>
+                <div className="ttd-enemy-art">{viewedEnemy.art}</div>
+                <h3 style={{ marginTop: 0, marginBottom: 8 }}>{viewedEnemy.name}</h3>
+                <div className="ttd-stat-grid" style={{ marginBottom: 10 }}>
+                  <div className="ttd-stat">
+                    <label>HP</label>
+                    <strong style={mono}>{viewedEnemy.hp}</strong>
+                  </div>
+                  <div className="ttd-stat">
+                    <label>Attack Power</label>
+                    <strong style={{ ...mono, color: "#c33939" }}>{viewedEnemy.attackPower}</strong>
+                  </div>
+                </div>
+                <p style={{ margin: 0, color: "#425a70" }}>{viewedEnemy.flavor}</p>
+              </>
+            ) : (
+              <p style={{ margin: 0, color: "#5d7082" }}>Enemy details unavailable.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {kickPrompt ? (
         <div className="ttd-modal-backdrop" onClick={() => setKickPrompt(null)}>

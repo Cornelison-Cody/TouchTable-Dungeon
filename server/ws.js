@@ -114,7 +114,17 @@ export function setupWebSocket(server) {
               hp: h.hp,
               maxHp: h.maxHp
             })),
-            enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
+            enemy: {
+              id: game.enemy.id,
+              name: game.enemy.name || null,
+              art: game.enemy.art || null,
+              flavor: game.enemy.flavor || null,
+              attackPower: game.enemy.attackPower ?? game.rules.enemyDamage,
+              x: game.enemy.x,
+              y: game.enemy.y,
+              hp: game.enemy.hp,
+              maxHp: game.enemy.maxHp
+            },
             rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
             log: game.log.slice(-10)
           }
@@ -148,7 +158,17 @@ export function setupWebSocket(server) {
               maxHp: h.maxHp
             })),
             hero: hero ? { x: hero.x, y: hero.y, hp: hero.hp, maxHp: hero.maxHp } : null,
-            enemy: { x: game.enemy.x, y: game.enemy.y, hp: game.enemy.hp, maxHp: game.enemy.maxHp },
+            enemy: {
+              id: game.enemy.id,
+              name: game.enemy.name || null,
+              art: game.enemy.art || null,
+              flavor: game.enemy.flavor || null,
+              attackPower: game.enemy.attackPower ?? game.rules.enemyDamage,
+              x: game.enemy.x,
+              y: game.enemy.y,
+              hp: game.enemy.hp,
+              maxHp: game.enemy.maxHp
+            },
             apRemaining: game.turn.apRemaining,
             apMax: game.turn.apMax,
             lastHeroDamage:
