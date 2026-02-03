@@ -319,6 +319,32 @@ export function setupWebSocket(server) {
     emitViews();
   }
 
+  function setNextActiveFrom(startIdx0) {
+    if (!game) return null;
+    const order = game.turn.order || [];
+    if (!order.length) {
+      game.turn.activePlayerId = null;
+      game.turn.activeIndex = 0;
+      return null;
+    }
+
+    const n = order.length;
+    for (let step = 0; step < n; step += 1) {
+      const idx = (startIdx0 + step + n) % n;
+      const pid = order[idx];
+      if (isHeroAlive(game.heroes[pid])) {
+        game.turn.activeIndex = idx;
+        game.turn.activePlayerId = pid;
+        resetTurnAP(game);
+        return pid;
+      }
+    }
+
+    game.turn.activePlayerId = null;
+    game.turn.activeIndex = 0;
+    return null;
+  }
+
   function handleSpawnEnemy(ws, id) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
 
@@ -344,6 +370,74 @@ export function setupWebSocket(server) {
     game.log.push({ at: Date.now(), msg: `Enemy spawned at (${spawn.x},${spawn.y}) by table.` });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, spawn }, id));
+    emitViews();
+  }
+
+  function handleKickPlayer(ws, id, payload) {
+    const targetPlayerId = (payload?.playerId ?? "").toString().trim();
+    const targetSeat = Number(payload?.seat);
+
+    let seatObj = null;
+    if (targetPlayerId) {
+      seatObj = session.seats.find((s) => s.playerId === targetPlayerId) || null;
+    } else if (Number.isFinite(targetSeat) && targetSeat >= 1 && targetSeat <= session.seats.length) {
+      seatObj = session.seats[targetSeat - 1] || null;
+    }
+
+    if (!seatObj || !seatObj.occupied || !seatObj.playerId) {
+      return reject(ws, id, "NOT_FOUND", "Player/seat not found.");
+    }
+
+    const playerId = seatObj.playerId;
+    const playerName = seatObj.playerName || shortName(playerId);
+    const seatNo = seatObj.seat;
+
+    // Clear seat reservation first so reconnect tokens cannot reclaim it.
+    seatObj.occupied = false;
+    seatObj.playerName = null;
+    seatObj.playerId = null;
+    seatObj.resumeToken = null;
+
+    // Disconnect gameplay ownership for any connected phone clients.
+    for (const [clientWs, info] of clients.entries()) {
+      if (info.role === Role.PHONE && info.playerId === playerId) {
+        info.playerId = null;
+        info.seat = null;
+        send(clientWs, makeMsg(MsgType.ERROR, { code: "KICKED", message: "You were removed from the session by the table." }, "kicked"));
+        send(clientWs, makeMsg(MsgType.STATE_PRIVATE, { state: { sessionId: session.sessionId, player: null, game: null } }));
+      }
+    }
+
+    if (game) {
+      const removedOrderIdx = game.turn.order.indexOf(playerId);
+      const wasActive = game.turn.activePlayerId === playerId;
+
+      delete game.heroes[playerId];
+      game.turn.order = game.turn.order.filter((pid) => pid !== playerId && !!game.heroes[pid]);
+
+      if (!game.turn.order.length) {
+        game.turn.activePlayerId = null;
+        game.turn.activeIndex = 0;
+      } else if (wasActive) {
+        const start = Math.max(0, Math.min(removedOrderIdx, game.turn.order.length - 1));
+        const next = setNextActiveFrom(start);
+        game.log.push({ at: Date.now(), msg: `Player removed: ${playerName} (seat ${seatNo}).` });
+        game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No heroes left standing." });
+      } else {
+        const activeIdx = game.turn.order.indexOf(game.turn.activePlayerId);
+        if (activeIdx >= 0) {
+          game.turn.activeIndex = activeIdx;
+          game.log.push({ at: Date.now(), msg: `Player removed: ${playerName} (seat ${seatNo}).` });
+        } else {
+          const start = Math.max(0, Math.min(removedOrderIdx, game.turn.order.length - 1));
+          const next = setNextActiveFrom(start);
+          game.log.push({ at: Date.now(), msg: `Player removed: ${playerName} (seat ${seatNo}).` });
+          game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No heroes left standing." });
+        }
+      }
+    }
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, removed: { playerId, seat: seatNo } }, id));
     emitViews();
   }
 
@@ -517,6 +611,10 @@ export function setupWebSocket(server) {
         const action = msg.payload?.action;
         if (action === ActionType.SPAWN_ENEMY) {
           handleSpawnEnemy(ws, msg.id);
+          return;
+        }
+        if (action === ActionType.KICK_PLAYER) {
+          handleKickPlayer(ws, msg.id, msg.payload?.params ?? {});
           return;
         }
         reject(ws, msg.id, "TABLE_FORBIDDEN", "Table is view-only. Move from your phone.");

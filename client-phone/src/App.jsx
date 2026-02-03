@@ -116,10 +116,18 @@ export default function App() {
           if (st?.player) {
             setJoined(true);
             setPlayer(st.player);
+          } else {
+            setJoined(false);
+            setPlayer(null);
           }
         } else if (msg.t === MsgType.ERROR) {
           const m = msg.payload?.message ?? "Unknown error";
           const sn = msg.payload?.snippet;
+          if (msg.payload?.code === "KICKED") {
+            localStorage.removeItem("tt_resume_token");
+            setJoined(false);
+            setPlayer(null);
+          }
           setError(sn ? `${m}\n\nSnippet:\n${sn}` : m);
         }
       } catch {

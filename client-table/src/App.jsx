@@ -109,6 +109,20 @@ export default function App() {
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.SPAWN_ENEMY, params: {} }, "spawn-enemy")));
   }
 
+  function kickPlayer(playerId, playerName) {
+    if (!playerId) return;
+    const ok = window.confirm(`Kick ${playerName || playerId.slice(0, 4)} from the session?`);
+    if (!ok) return;
+
+    setError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.KICK_PLAYER, params: { playerId } }, "kick-player")));
+  }
+
   function ensureAudioContext() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return null;
@@ -321,6 +335,23 @@ export default function App() {
                     {s.occupied ? s.playerName : <span style={{ opacity: 0.6 }}>empty</span>}
                     {s.playerId && activePlayerId === s.playerId ? (
                       <span style={{ marginLeft: 8, ...mono }}>← active</span>
+                    ) : null}
+                    {s.occupied && s.playerId ? (
+                      <button
+                        onClick={() => kickPlayer(s.playerId, s.playerName)}
+                        style={{
+                          marginLeft: 10,
+                          padding: "2px 8px",
+                          borderRadius: 8,
+                          border: "1px solid #e3b4b4",
+                          background: "#fff2f2",
+                          color: "#9d1f1f",
+                          fontWeight: 700,
+                          cursor: "pointer"
+                        }}
+                      >
+                        Kick
+                      </button>
                     ) : null}
                   </li>
                 ))}
