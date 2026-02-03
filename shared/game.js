@@ -1,7 +1,8 @@
 export const ActionType = Object.freeze({
   MOVE: "MOVE",
   ATTACK: "ATTACK",
-  END_TURN: "END_TURN"
+  END_TURN: "END_TURN",
+  SPAWN_ENEMY: "SPAWN_ENEMY"
 });
 
 // Hex grid helpers (even-q vertical layout):

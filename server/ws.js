@@ -319,6 +319,34 @@ export function setupWebSocket(server) {
     emitViews();
   }
 
+  function handleSpawnEnemy(ws, id) {
+    if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
+
+    const occupied = new Set(
+      Object.values(game.heroes)
+        .filter((h) => isHeroAlive(h))
+        .map((h) => `${h.x},${h.y}`)
+    );
+    const candidates = [];
+    for (let y = 0; y < game.grid.h; y += 1) {
+      for (let x = 0; x < game.grid.w; x += 1) {
+        if (!occupied.has(`${x},${y}`)) candidates.push({ x, y });
+      }
+    }
+    if (!candidates.length) return reject(ws, id, "NO_SPACE", "No free hexes to spawn enemy.");
+
+    const idx = Math.floor(Math.random() * candidates.length);
+    const spawn = candidates[idx];
+    game.enemy.x = spawn.x;
+    game.enemy.y = spawn.y;
+    game.enemy.hp = game.enemy.maxHp;
+    game.lastHeroDamage = null;
+    game.log.push({ at: Date.now(), msg: `Enemy spawned at (${spawn.x},${spawn.y}) by table.` });
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, spawn }, id));
+    emitViews();
+  }
+
   function handleAction(ws, id, actorPlayerId, payload) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
 
@@ -486,6 +514,11 @@ export function setupWebSocket(server) {
 
     if (msg.t === MsgType.ACTION) {
       if (info.role === Role.TABLE) {
+        const action = msg.payload?.action;
+        if (action === ActionType.SPAWN_ENEMY) {
+          handleSpawnEnemy(ws, msg.id);
+          return;
+        }
         reject(ws, msg.id, "TABLE_FORBIDDEN", "Table is view-only. Move from your phone.");
         return;
       }

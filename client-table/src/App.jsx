@@ -99,6 +99,16 @@ export default function App() {
     setWsUrl(wsUrl.trim());
   }
 
+  function spawnEnemyForTesting() {
+    setError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.SPAWN_ENEMY, params: {} }, "spawn-enemy")));
+  }
+
   function ensureAudioContext() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return null;
@@ -330,7 +340,7 @@ export default function App() {
                 <div style={{ marginTop: 8, opacity: 0.9 }}>
                   Heroes: <span style={mono}>{heroes.length}</span> • Enemy HP: <span style={mono}>{enemyHpText}</span>
                 </div>
-                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={() => {
                       unlockAudio();
@@ -346,6 +356,19 @@ export default function App() {
                     }}
                   >
                     Test Hit Sound
+                  </button>
+                  <button
+                    onClick={spawnEnemyForTesting}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #ccc",
+                      background: "#fff",
+                      cursor: "pointer",
+                      fontWeight: 600
+                    }}
+                  >
+                    Spawn Random Monster
                   </button>
                   <span style={{ ...mono, fontSize: 12, opacity: 0.7 }}>
                     SFX: {audioReady ? "ready" : "tap to enable"}
