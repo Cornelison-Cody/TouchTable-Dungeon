@@ -56,7 +56,7 @@ const TABLE_GAMES = [
     title: "Catan",
     subtitle: "Physical pieces mode",
     description: "Classic 19-hex board with randomized number tokens for physical cards and pieces on top of the table display.",
-    badges: ["No phones", "Board randomizer", "GoDice next"]
+    badges: ["No phones", "Board randomizer", "GoDice ready"]
   }
 ];
 
@@ -975,6 +975,145 @@ const CATAN_RESOURCE_META = {
   desert: { label: "Desert", color: "#d0bc96", texture: desertTexture }
 };
 
+const GODICE_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const GODICE_NOTIFY_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const GODICE_FACE_NORMALS = [
+  [0, 0, 0],
+  [0, 0, 1],
+  [0, 1, 0],
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, -1, 0],
+  [0, 0, -1]
+];
+const GODICE_ROLL_COMBINE_WINDOW_MS = 7000;
+const GODICE_ROLL_DEDUPE_MS = 1200;
+const GODICE_FLASH_MS = 1400;
+const GODICE_CALIBRATION_STORAGE_KEY = "ttd_godice_calibration_v1";
+
+function toSignedByte(raw) {
+  return raw > 127 ? raw - 256 : raw;
+}
+
+function decodeGoDiceFaceFromOrientation(xRaw, yRaw, zRaw) {
+  const x = toSignedByte(xRaw);
+  const y = toSignedByte(yRaw);
+  const z = toSignedByte(zRaw);
+  const norm = Math.hypot(x, y, z);
+  if (!norm) return null;
+
+  const nx = x / norm;
+  const ny = y / norm;
+  const nz = z / norm;
+
+  let bestFace = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let face = 1; face <= 6; face += 1) {
+    const [fx, fy, fz] = GODICE_FACE_NORMALS[face];
+    const distance = Math.hypot(nx - fx, ny - fy, nz - fz);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestFace = face;
+    }
+  }
+  return bestFace;
+}
+
+function parseGoDiceRollValue(dataView) {
+  if (!dataView) return null;
+  const bytes = new Uint8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+  if (!bytes.length) return null;
+
+  const firstByte = bytes[0];
+  const command = String.fromCharCode(firstByte);
+
+  // Most GoDice D6 "stable" notifications are compact and send xyz as bytes[1..3].
+  if (command === "S") {
+    // Some firmware variants include a status byte before xyz.
+    if (bytes.length >= 5 && bytes[1] === 0) {
+      return decodeGoDiceFaceFromOrientation(bytes[2], bytes[3], bytes[4]);
+    }
+    if (bytes.length >= 4) {
+      return decodeGoDiceFaceFromOrientation(bytes[1], bytes[2], bytes[3]);
+    }
+  }
+
+  // Some integrations expose direct stable value messages.
+  if (command === "R" && bytes.length >= 3) {
+    const value = Number(bytes[2] ?? bytes[1]);
+    if (value >= 1 && value <= 6) return value;
+  }
+
+  // Fallback: accept direct value byte payloads.
+  if (bytes.length === 1) {
+    const value = Number(firstByte);
+    if (value >= 1 && value <= 6) return value;
+  }
+  return null;
+}
+
+function normalizeGoDiceCalibrationMap(input) {
+  if (!input || typeof input !== "object") return null;
+
+  const normalized = {};
+  for (const [rawKey, mappedFace] of Object.entries(input)) {
+    const rawValue = Number(rawKey);
+    const faceValue = Number(mappedFace);
+    if (rawValue >= 1 && rawValue <= 6 && faceValue >= 1 && faceValue <= 6) {
+      normalized[String(rawValue)] = faceValue;
+    }
+  }
+  return normalized;
+}
+
+function isCompleteGoDiceCalibration(input) {
+  const map = normalizeGoDiceCalibrationMap(input);
+  if (!map) return false;
+
+  const keys = Object.keys(map);
+  if (keys.length !== 6) return false;
+
+  const seenFaces = new Set();
+  for (let rawValue = 1; rawValue <= 6; rawValue += 1) {
+    const mappedFace = map[String(rawValue)];
+    if (!(mappedFace >= 1 && mappedFace <= 6)) return false;
+    seenFaces.add(mappedFace);
+  }
+  return seenFaces.size === 6;
+}
+
+function loadGoDiceCalibrations() {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(GODICE_CALIBRATION_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const calibrations = {};
+    for (const [dieId, maybeMap] of Object.entries(parsed)) {
+      const normalized = normalizeGoDiceCalibrationMap(maybeMap);
+      if (isCompleteGoDiceCalibration(normalized)) {
+        calibrations[dieId] = normalized;
+      }
+    }
+    return calibrations;
+  } catch {
+    return {};
+  }
+}
+
+function saveGoDiceCalibrations(calibrations) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(GODICE_CALIBRATION_STORAGE_KEY, JSON.stringify(calibrations || {}));
+  } catch {
+    // ignore storage failures (private mode, quota, etc.)
+  }
+}
+
 function shuffled(list) {
   const out = [...list];
   for (let i = out.length - 1; i > 0; i -= 1) {
@@ -1194,11 +1333,320 @@ function CatanTableView({ onBackToMenu }) {
   const [tiles, setTiles] = useState(() => generateCatanBoardLayout());
   const [selectedAction, setSelectedAction] = useState("");
   const [barbarianStep] = useState(0);
+  const [goDiceStatus, setGoDiceStatus] = useState("Disconnected");
+  const [goDiceError, setGoDiceError] = useState(null);
+  const [dieCalibrations, setDieCalibrations] = useState(() => loadGoDiceCalibrations());
+  const [connectedDice, setConnectedDice] = useState([]);
+  const [lastRollSummary, setLastRollSummary] = useState(null);
+  const [flashingNumber, setFlashingNumber] = useState(null);
+  const [flashEpoch, setFlashEpoch] = useState(0);
+  const [calibrationSession, setCalibrationSession] = useState(null);
+
+  const diceConnectionsRef = useRef(new Map());
+  const dieCalibrationsRef = useRef(dieCalibrations);
+  const flashTimeoutRef = useRef(null);
+  const lastCombinedSignatureRef = useRef("");
+  const nextRollVersionRef = useRef(1);
+  const calibrationSessionRef = useRef(null);
+
+  const goDiceSupported = typeof navigator !== "undefined" && !!navigator.bluetooth;
 
   const tilesByRow = CATAN_ROW_LENGTHS.map((_, row) => tiles.filter((tile) => tile.row === row));
 
+  function updateCalibrationSession(nextSession) {
+    calibrationSessionRef.current = nextSession;
+    setCalibrationSession(nextSession);
+  }
+
+  function getCalibrationForDie(dieId) {
+    const calibration = dieCalibrationsRef.current?.[dieId];
+    return isCompleteGoDiceCalibration(calibration) ? calibration : null;
+  }
+
+  function mapRawDieValue(dieId, rawValue) {
+    const calibration = getCalibrationForDie(dieId);
+    if (!calibration) return rawValue;
+    const mapped = Number(calibration[String(rawValue)]);
+    return mapped >= 1 && mapped <= 6 ? mapped : rawValue;
+  }
+
+  function refreshDiceStatus() {
+    const dice = [...diceConnectionsRef.current.values()]
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.device?.name || "GoDice",
+        lastValue: entry.lastValue,
+        calibrated: !!getCalibrationForDie(entry.id)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    setConnectedDice(dice);
+    if (!dice.length) {
+      setGoDiceStatus("Disconnected");
+    } else {
+      const uncalibratedCount = dice.filter((die) => !die.calibrated).length;
+      if (uncalibratedCount > 0) {
+        setGoDiceStatus(
+          `${dice.length} die${dice.length === 1 ? "" : "s"} connected (${uncalibratedCount} need${uncalibratedCount === 1 ? "s" : ""} calibration)`
+        );
+      } else {
+        setGoDiceStatus(`${dice.length} die${dice.length === 1 ? "" : "s"} connected (calibrated)`);
+      }
+    }
+  }
+
+  function clearDiceConnection(entry, shouldDisconnectGatt = false) {
+    if (!entry) return;
+    try {
+      if (entry.notifyCharacteristic && entry.onNotification) {
+        entry.notifyCharacteristic.removeEventListener("characteristicvaluechanged", entry.onNotification);
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      entry.device?.removeEventListener("gattserverdisconnected", entry.onDisconnect);
+    } catch {
+      // ignore
+    }
+    try {
+      if (entry.notifyCharacteristic?.stopNotifications && entry.device?.gatt?.connected) {
+        const stopPromise = entry.notifyCharacteristic.stopNotifications();
+        if (stopPromise?.catch) stopPromise.catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+    if (shouldDisconnectGatt) {
+      try {
+        if (entry.device?.gatt?.connected) entry.device.gatt.disconnect();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  function flashRolledNumber(sum, first, second) {
+    setLastRollSummary({
+      dieA: first.value,
+      dieB: second.value,
+      dieAName: first.name,
+      dieBName: second.name,
+      sum,
+      at: Date.now()
+    });
+    setFlashingNumber(sum);
+    setFlashEpoch((prev) => prev + 1);
+    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+    flashTimeoutRef.current = setTimeout(() => {
+      setFlashingNumber(null);
+    }, GODICE_FLASH_MS);
+  }
+
+  function beginCalibration(dieId) {
+    const entry = diceConnectionsRef.current.get(dieId);
+    if (!entry) {
+      setGoDiceError("Die not connected.");
+      return;
+    }
+
+    const nextSession = {
+      dieId,
+      dieName: entry.device?.name || "GoDice",
+      expectedFace: 1,
+      captured: {}
+    };
+    updateCalibrationSession(nextSession);
+    setGoDiceError(null);
+  }
+
+  function cancelCalibration() {
+    updateCalibrationSession(null);
+  }
+
+  function saveCalibrationForDie(dieId, calibrationMap) {
+    const normalized = normalizeGoDiceCalibrationMap(calibrationMap);
+    if (!isCompleteGoDiceCalibration(normalized)) {
+      setGoDiceError("Calibration failed: incomplete side map. Please recalibrate.");
+      return;
+    }
+
+    const nextCalibrations = {
+      ...dieCalibrationsRef.current,
+      [dieId]: normalized
+    };
+    dieCalibrationsRef.current = nextCalibrations;
+
+    const entry = diceConnectionsRef.current.get(dieId);
+    if (entry && typeof entry.lastRawValue === "number") {
+      const mapped = Number(normalized[String(entry.lastRawValue)]);
+      entry.lastValue = mapped >= 1 && mapped <= 6 ? mapped : entry.lastRawValue;
+    }
+
+    setDieCalibrations(nextCalibrations);
+  }
+
+  function captureCalibrationRoll(dieId, rawRollValue) {
+    const session = calibrationSessionRef.current;
+    if (!session || session.dieId !== dieId) return;
+
+    const rawKey = String(rawRollValue);
+    const existingFace = session.captured[rawKey];
+    if (existingFace && existingFace !== session.expectedFace) {
+      setGoDiceError(
+        `Calibration: this looked like face ${existingFace}. Roll again and stop with face ${session.expectedFace} on top.`
+      );
+      return;
+    }
+    if (existingFace === session.expectedFace) return;
+
+    const nextCaptured = {
+      ...session.captured,
+      [rawKey]: session.expectedFace
+    };
+
+    if (session.expectedFace >= 6) {
+      saveCalibrationForDie(dieId, nextCaptured);
+      updateCalibrationSession(null);
+      setGoDiceError(null);
+      refreshDiceStatus();
+      return;
+    }
+
+    updateCalibrationSession({
+      ...session,
+      expectedFace: session.expectedFace + 1,
+      captured: nextCaptured
+    });
+  }
+
+  function tryCombineDiceRolls() {
+    const now = Date.now();
+    const recent = [...diceConnectionsRef.current.values()]
+      .filter((entry) => typeof entry.lastValue === "number" && now - entry.lastRolledAt <= GODICE_ROLL_COMBINE_WINDOW_MS)
+      .sort((a, b) => b.lastRolledAt - a.lastRolledAt);
+
+    if (recent.length < 2) return;
+    const first = recent[0];
+    const second = recent.find((entry) => entry.id !== first.id);
+    if (!second) return;
+
+    const ordered = [first, second].sort((a, b) => a.id.localeCompare(b.id));
+    const signature = `${ordered[0].id}@${ordered[0].rollVersion}|${ordered[1].id}@${ordered[1].rollVersion}`;
+    if (lastCombinedSignatureRef.current === signature) return;
+    lastCombinedSignatureRef.current = signature;
+
+    flashRolledNumber(first.lastValue + second.lastValue, { name: first.device?.name || "GoDice", value: first.lastValue }, { name: second.device?.name || "GoDice", value: second.lastValue });
+  }
+
+  function registerDieRoll(dieId, rawRollValue) {
+    const entry = diceConnectionsRef.current.get(dieId);
+    if (!entry) return;
+
+    const now = Date.now();
+    if (entry.lastRawValue === rawRollValue && now - entry.lastAcceptedAt < GODICE_ROLL_DEDUPE_MS) return;
+
+    captureCalibrationRoll(dieId, rawRollValue);
+
+    entry.lastRawValue = rawRollValue;
+    entry.lastValue = mapRawDieValue(dieId, rawRollValue);
+    entry.lastRolledAt = now;
+    entry.lastAcceptedAt = now;
+    entry.rollVersion = nextRollVersionRef.current;
+    nextRollVersionRef.current += 1;
+
+    refreshDiceStatus();
+    tryCombineDiceRolls();
+  }
+
+  async function connectGoDice() {
+    if (!goDiceSupported) {
+      setGoDiceError("This browser does not support Web Bluetooth. Use Chrome/Edge over HTTPS or localhost.");
+      return;
+    }
+
+    setGoDiceError(null);
+    setGoDiceStatus("Connecting...");
+
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: "GoDice" }],
+        optionalServices: [GODICE_SERVICE_UUID]
+      });
+
+      const dieId = device.id || `${device.name || "godice"}-${Date.now()}`;
+      if (diceConnectionsRef.current.has(dieId)) {
+        setGoDiceStatus("Die already connected");
+        return;
+      }
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(GODICE_SERVICE_UUID);
+      const notifyCharacteristic = await service.getCharacteristic(GODICE_NOTIFY_CHARACTERISTIC_UUID);
+
+      const onNotification = (event) => {
+        const dataView = event.target?.value;
+        const value = parseGoDiceRollValue(dataView);
+        if (typeof value === "number") {
+          registerDieRoll(dieId, value);
+          return;
+        }
+
+        if (import.meta.env.DEV && dataView) {
+          const bytes = new Uint8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+          console.debug("[GoDice] Ignored packet", device.name || dieId, [...bytes]);
+        }
+      };
+      const onDisconnect = () => {
+        const disconnectedEntry = diceConnectionsRef.current.get(dieId);
+        clearDiceConnection(disconnectedEntry, false);
+        diceConnectionsRef.current.delete(dieId);
+        if (calibrationSessionRef.current?.dieId === dieId) {
+          updateCalibrationSession(null);
+        }
+        refreshDiceStatus();
+      };
+
+      notifyCharacteristic.addEventListener("characteristicvaluechanged", onNotification);
+      await notifyCharacteristic.startNotifications();
+      device.addEventListener("gattserverdisconnected", onDisconnect);
+
+      diceConnectionsRef.current.set(dieId, {
+        id: dieId,
+        device,
+        notifyCharacteristic,
+        onNotification,
+        onDisconnect,
+        lastValue: null,
+        lastRawValue: null,
+        lastRolledAt: 0,
+        lastAcceptedAt: 0,
+        rollVersion: 0
+      });
+
+      refreshDiceStatus();
+    } catch (err) {
+      if (err?.name !== "NotFoundError") {
+        setGoDiceError(err?.message || "Failed to connect GoDice.");
+      }
+      refreshDiceStatus();
+    }
+  }
+
+  function disconnectAllDice() {
+    for (const entry of diceConnectionsRef.current.values()) {
+      clearDiceConnection(entry, true);
+    }
+    diceConnectionsRef.current.clear();
+    updateCalibrationSession(null);
+    refreshDiceStatus();
+  }
+
   function resetBoard() {
     setTiles(generateCatanBoardLayout());
+    setFlashingNumber(null);
+    setLastRollSummary(null);
+    lastCombinedSignatureRef.current = "";
   }
 
   function handleBoardAction(action) {
@@ -1207,6 +1655,20 @@ function CatanTableView({ onBackToMenu }) {
     }
     setSelectedAction("");
   }
+
+  useEffect(() => {
+    dieCalibrationsRef.current = dieCalibrations;
+    saveGoDiceCalibrations(dieCalibrations);
+    refreshDiceStatus();
+  }, [dieCalibrations]);
+
+  useEffect(() => () => {
+    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+    for (const entry of diceConnectionsRef.current.values()) {
+      clearDiceConnection(entry, true);
+    }
+    diceConnectionsRef.current.clear();
+  }, []);
 
   return (
     <div className="ttc-root">
@@ -1281,6 +1743,10 @@ function CatanTableView({ onBackToMenu }) {
           padding: 8px 12px;
           cursor: pointer;
         }
+        .ttc-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
         .ttc-pill {
           border-radius: 999px;
           border: 1px solid rgba(18, 36, 58, 0.14);
@@ -1289,6 +1755,11 @@ function CatanTableView({ onBackToMenu }) {
           font-size: 0.8rem;
           font-weight: 700;
           color: #426178;
+        }
+        .ttc-pill.roll {
+          border-color: rgba(14, 126, 99, 0.32);
+          background: rgba(220, 249, 238, 0.88);
+          color: #0e6f56;
         }
         .ttc-select {
           border: 1px solid rgba(18, 36, 58, 0.18);
@@ -1299,6 +1770,61 @@ function CatanTableView({ onBackToMenu }) {
           padding: 8px 34px 8px 10px;
           cursor: pointer;
           min-width: 170px;
+        }
+        .ttc-inline-error {
+          margin-top: 8px;
+          color: #892727;
+          font-size: 0.84rem;
+          font-weight: 700;
+        }
+        .ttc-dice-strip {
+          margin-top: 8px;
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .ttc-die-chip {
+          border-radius: 999px;
+          border: 1px solid rgba(18, 36, 58, 0.14);
+          background: rgba(255,255,255,0.82);
+          padding: 3px 9px;
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #32516a;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .ttc-die-chip.calibrated {
+          border-color: rgba(18, 126, 83, 0.34);
+          background: rgba(227, 250, 241, 0.92);
+        }
+        .ttc-chip-btn {
+          border: 1px solid rgba(18, 36, 58, 0.16);
+          background: #ffffff;
+          color: #2b4a63;
+          border-radius: 999px;
+          padding: 2px 8px;
+          font-size: 0.7rem;
+          font-weight: 800;
+          cursor: pointer;
+        }
+        .ttc-calibration-card {
+          margin-top: 8px;
+          border: 1px solid rgba(18, 118, 155, 0.24);
+          background: rgba(231, 248, 255, 0.88);
+          border-radius: 12px;
+          padding: 8px 10px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .ttc-calibration-copy {
+          color: #235169;
+          font-size: 0.82rem;
+          font-weight: 700;
         }
         .ttc-board-wrap {
           border: 1px solid var(--ttc-border);
@@ -1380,6 +1906,12 @@ function CatanTableView({ onBackToMenu }) {
         .ttc-number.hot {
           color: #b02f2f;
         }
+        .ttc-number.flash {
+          animation: ttcRollFlash 0.78s ease-out 2;
+          background: rgba(255, 251, 224, 0.95);
+          border-color: rgba(170, 137, 56, 0.52);
+          box-shadow: 0 0 0 6px rgba(255, 233, 159, 0.38), 0 3px 7px rgba(53, 43, 20, 0.25);
+        }
         .ttc-desert {
           font-size: clamp(0.56rem, 1vw, 0.75rem);
           font-weight: 900;
@@ -1455,6 +1987,11 @@ function CatanTableView({ onBackToMenu }) {
           text-shadow: 0 1px 2px rgba(15, 58, 82, 0.35);
           z-index: 1;
         }
+        @keyframes ttcRollFlash {
+          0% { transform: rotate(-90deg) scale(1); }
+          28% { transform: rotate(-90deg) scale(1.2); }
+          100% { transform: rotate(-90deg) scale(1); }
+        }
         @media (max-width: 1100px) {
           .ttc-island-shell {
             padding-right: 0;
@@ -1474,9 +2011,42 @@ function CatanTableView({ onBackToMenu }) {
         <header className="ttc-header">
           <div>
             <h1 className="ttc-title">Catan Table Board</h1>
+            <p className="ttc-subtext">Connect two GoDice, roll, and matching number tokens will flash.</p>
+            {goDiceError ? <div className="ttc-inline-error">{goDiceError}</div> : null}
+            {connectedDice.length ? (
+              <div className="ttc-dice-strip">
+                {connectedDice.map((die) => (
+                  <span className={`ttc-die-chip${die.calibrated ? " calibrated" : ""}`} key={die.id}>
+                    {die.name} {typeof die.lastValue === "number" ? `(${die.lastValue})` : "(waiting)"} {die.calibrated ? "calibrated" : "uncalibrated"}
+                    <button className="ttc-chip-btn" onClick={() => beginCalibration(die.id)}>
+                      Calibrate
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {calibrationSession ? (
+              <div className="ttc-calibration-card">
+                <div className="ttc-calibration-copy">
+                  Calibrating {calibrationSession.dieName}: roll and leave face <strong>{calibrationSession.expectedFace}</strong> up (step {calibrationSession.expectedFace}/6).
+                </div>
+                <button className="ttc-chip-btn" onClick={cancelCalibration}>
+                  Cancel
+                </button>
+              </div>
+            ) : null}
           </div>
           <div className="ttc-head-actions">
             <button className="ttc-btn" onClick={onBackToMenu}>Game Menu</button>
+            <button className="ttc-btn" onClick={connectGoDice} disabled={!goDiceSupported}>
+              Add GoDice
+            </button>
+            <button className="ttc-btn" onClick={() => beginCalibration(connectedDice[0]?.id)} disabled={!connectedDice.length}>
+              Calibrate First Die
+            </button>
+            <button className="ttc-btn" onClick={disconnectAllDice} disabled={!connectedDice.length}>
+              Disconnect Dice
+            </button>
             <select
               className="ttc-select"
               aria-label="Board actions"
@@ -1486,7 +2056,12 @@ function CatanTableView({ onBackToMenu }) {
               <option value="">Board Actions</option>
               <option value="reset-board">Reset Board Layout</option>
             </select>
-            <span className="ttc-pill">GoDice integration: next</span>
+            <span className="ttc-pill">{goDiceSupported ? goDiceStatus : "Web Bluetooth unavailable"}</span>
+            {lastRollSummary ? (
+              <span className="ttc-pill roll">
+                Roll: {lastRollSummary.dieA} + {lastRollSummary.dieB} = {lastRollSummary.sum}
+              </span>
+            ) : null}
           </div>
         </header>
 
@@ -1502,6 +2077,7 @@ function CatanTableView({ onBackToMenu }) {
                     {rowTiles.map((tile) => {
                       const meta = CATAN_RESOURCE_META[tile.resource] || CATAN_RESOURCE_META.desert;
                       const hotNumber = tile.number === 6 || tile.number === 8;
+                      const flashing = typeof tile.number === "number" && tile.number === flashingNumber;
 
                       return (
                         <div
@@ -1514,7 +2090,9 @@ function CatanTableView({ onBackToMenu }) {
                       }}
                     >
                           {typeof tile.number === "number" ? (
-                            <div className={`ttc-number${hotNumber ? " hot" : ""}`}>{tile.number}</div>
+                            <div key={`${tile.id}-${flashEpoch}`} className={`ttc-number${hotNumber ? " hot" : ""}${flashing ? " flash" : ""}`}>
+                              {tile.number}
+                            </div>
                           ) : (
                             <div className="ttc-desert">No token</div>
                           )}
