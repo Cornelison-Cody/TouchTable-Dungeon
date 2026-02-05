@@ -8,6 +8,7 @@ import wheatTexture from "./assets/catan-textures/wheat.svg";
 import hillsTexture from "./assets/catan-textures/hills.svg";
 import mountainsTexture from "./assets/catan-textures/mountains.svg";
 import desertTexture from "./assets/catan-textures/desert.svg";
+import oasisTexture from "./assets/catan-textures/oasis.svg";
 
 const mono = {
   fontFamily:
@@ -934,15 +935,17 @@ function DungeonTableView({ onBackToMenu }) {
 }
 
 const CATAN_ROW_LENGTHS = [4, 5, 6, 6, 5, 4];
+const CATAN_LOWER_ROW_START = Math.floor(CATAN_ROW_LENGTHS.length / 2);
 const CATAN_RESOURCES = [
   "wood", "wood", "wood", "wood", "wood", "wood",
   "brick", "brick", "brick", "brick", "brick",
   "sheep", "sheep", "sheep", "sheep", "sheep", "sheep",
   "wheat", "wheat", "wheat", "wheat", "wheat", "wheat",
   "ore", "ore", "ore", "ore", "ore",
-  "desert", "desert"
+  "oasis", "oasis"
 ];
-const CATAN_NUMBERS = [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12];
+const CATAN_NUMBERS = [2, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 12];
+const HOT_NUMBERS = new Set([6, 8]);
 const BARBARIAN_TRACK_STEPS = ["Sea", "Approach", "Near", "Sighting", "Alarm", "Coast", "Attack"];
 const BARBARIAN_TRACK_NODE_LAYOUT = [
   { x: 20, y: 16 },
@@ -968,6 +971,7 @@ const CATAN_RESOURCE_META = {
   sheep: { label: "Pasture", color: "#b7df70", texture: pastureTexture },
   wheat: { label: "Fields", color: "#d8b454", texture: wheatTexture },
   ore: { label: "Mountains", color: "#7d8899", texture: mountainsTexture },
+  oasis: { label: "Gold Oasis", color: "#2f95a8", texture: oasisTexture },
   desert: { label: "Desert", color: "#d0bc96", texture: desertTexture }
 };
 
@@ -980,31 +984,216 @@ function shuffled(list) {
   return out;
 }
 
-function generateCatanBoardLayout() {
-  const resources = shuffled(CATAN_RESOURCES);
-  const numbers = shuffled(CATAN_NUMBERS);
-  let numberIdx = 0;
+const CATAN_SLOT_LAYOUT = CATAN_ROW_LENGTHS.flatMap((count, row) => {
+  const centeredOffset = -((count - 1) / 2);
+  const lowerShift = row >= CATAN_LOWER_ROW_START ? -0.5 : 0;
+  return Array.from({ length: count }).map((_, col) => ({
+    row,
+    col,
+    x: centeredOffset + lowerShift + col
+  }));
+});
 
-  return CATAN_ROW_LENGTHS.flatMap((count, row) =>
-    Array.from({ length: count }).map((_, col) => {
-      const resource = resources.shift();
-      const isDesert = resource === "desert";
-      return {
-        id: `tile-${row}-${col}`,
-        row,
-        col,
-        resource,
-        number: isDesert ? null : numbers[numberIdx++]
-      };
-    })
-  );
+const CATAN_NEIGHBORS = (() => {
+  const neighbors = CATAN_SLOT_LAYOUT.map(() => []);
+  for (let i = 0; i < CATAN_SLOT_LAYOUT.length; i += 1) {
+    for (let j = i + 1; j < CATAN_SLOT_LAYOUT.length; j += 1) {
+      const a = CATAN_SLOT_LAYOUT[i];
+      const b = CATAN_SLOT_LAYOUT[j];
+      const rowDiff = Math.abs(a.row - b.row);
+      const xDiff = Math.abs(a.x - b.x);
+      const sameRowAdjacent = rowDiff === 0 && Math.abs(xDiff - 1) < 0.001;
+      const adjacentRowAdjacent = rowDiff === 1 && Math.abs(xDiff - 0.5) < 0.001;
+      if (sameRowAdjacent || adjacentRowAdjacent) {
+        neighbors[i].push(j);
+        neighbors[j].push(i);
+      }
+    }
+  }
+  return neighbors;
+})();
+
+function assignResourcesWithoutAdjacentDoubles() {
+  const assigned = new Array(CATAN_SLOT_LAYOUT.length).fill(null);
+
+  const makeCounts = () => {
+    const counts = new Map();
+    for (const value of CATAN_RESOURCES) counts.set(value, (counts.get(value) || 0) + 1);
+    return counts;
+  };
+
+  const availableForIndex = (idx, counts) => {
+    const usedByNeighbors = new Set();
+    for (const nIdx of CATAN_NEIGHBORS[idx]) {
+      const value = assigned[nIdx];
+      if (typeof value === "string") usedByNeighbors.add(value);
+    }
+    const candidates = [];
+    for (const [value, remaining] of counts.entries()) {
+      if (remaining > 0 && !usedByNeighbors.has(value)) candidates.push(value);
+    }
+    return candidates;
+  };
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    assigned.fill(null);
+    const counts = makeCounts();
+    const order = CATAN_SLOT_LAYOUT.map((_, idx) => idx).sort((a, b) => {
+      const degreeDiff = CATAN_NEIGHBORS[b].length - CATAN_NEIGHBORS[a].length;
+      if (degreeDiff !== 0) return degreeDiff;
+      return Math.random() - 0.5;
+    });
+
+    const backtrack = (pos) => {
+      if (pos === order.length) return true;
+
+      let bestPos = -1;
+      let bestCandidates = null;
+      for (let p = pos; p < order.length; p += 1) {
+        const idx = order[p];
+        const candidates = availableForIndex(idx, counts);
+        if (candidates.length === 0) return false;
+        if (!bestCandidates || candidates.length < bestCandidates.length) {
+          bestCandidates = candidates;
+          bestPos = p;
+          if (candidates.length === 1) break;
+        }
+      }
+
+      [order[pos], order[bestPos]] = [order[bestPos], order[pos]];
+      const idx = order[pos];
+      const candidates = shuffled(bestCandidates);
+
+      for (const value of candidates) {
+        assigned[idx] = value;
+        counts.set(value, counts.get(value) - 1);
+        if (backtrack(pos + 1)) return true;
+        counts.set(value, counts.get(value) + 1);
+        assigned[idx] = null;
+      }
+
+      return false;
+    };
+
+    if (backtrack(0)) return assigned;
+  }
+
+  // Fallback to unconstrained random if constrained assignment unexpectedly fails.
+  return shuffled(CATAN_RESOURCES);
+}
+
+function assignNumbersWithoutAdjacentDoubles(resources) {
+  const assigned = new Array(CATAN_SLOT_LAYOUT.length).fill(null);
+  const numberedIndexes = CATAN_SLOT_LAYOUT
+    .map((_, idx) => (resources[idx] === "desert" ? -1 : idx))
+    .filter((idx) => idx >= 0);
+
+  if (numberedIndexes.length !== CATAN_NUMBERS.length) {
+    return shuffled(CATAN_NUMBERS);
+  }
+
+  const makeCounts = () => {
+    const counts = new Map();
+    for (const value of CATAN_NUMBERS) counts.set(value, (counts.get(value) || 0) + 1);
+    return counts;
+  };
+
+  const availableForIndex = (idx, counts) => {
+    const neighborValues = [];
+    for (const nIdx of CATAN_NEIGHBORS[idx]) {
+      const value = assigned[nIdx];
+      if (typeof value === "number") neighborValues.push(value);
+    }
+    const preferred = [];
+    const fallback = [];
+    for (const [value, remaining] of counts.entries()) {
+      if (remaining <= 0) continue;
+      if (neighborValues.includes(value)) continue;
+
+      // Prefer to keep high-probability numbers apart, but allow if needed.
+      const touchesHot = HOT_NUMBERS.has(value) && neighborValues.some((n) => HOT_NUMBERS.has(n));
+      if (touchesHot) fallback.push(value);
+      else preferred.push(value);
+    }
+    return { preferred, fallback };
+  };
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    assigned.fill(null);
+    const counts = makeCounts();
+    const order = [...numberedIndexes].sort((a, b) => {
+      const degreeDiff = CATAN_NEIGHBORS[b].length - CATAN_NEIGHBORS[a].length;
+      if (degreeDiff !== 0) return degreeDiff;
+      return Math.random() - 0.5;
+    });
+
+    const backtrack = (pos) => {
+      if (pos === order.length) return true;
+
+      let bestPos = -1;
+      let bestOptions = null;
+      for (let p = pos; p < order.length; p += 1) {
+        const idx = order[p];
+        const options = availableForIndex(idx, counts);
+        const optionCount = options.preferred.length + options.fallback.length;
+        if (optionCount === 0) return false;
+        const bestCount = bestOptions ? bestOptions.preferred.length + bestOptions.fallback.length : Number.POSITIVE_INFINITY;
+        if (!bestOptions || optionCount < bestCount) {
+          bestOptions = options;
+          bestPos = p;
+          if (optionCount === 1) break;
+        }
+      }
+
+      [order[pos], order[bestPos]] = [order[bestPos], order[pos]];
+      const idx = order[pos];
+      const candidates = [...shuffled(bestOptions.preferred), ...shuffled(bestOptions.fallback)];
+
+      for (const value of candidates) {
+        assigned[idx] = value;
+        counts.set(value, counts.get(value) - 1);
+        if (backtrack(pos + 1)) return true;
+        counts.set(value, counts.get(value) + 1);
+        assigned[idx] = null;
+      }
+
+      return false;
+    };
+
+    if (backtrack(0)) {
+      return assigned;
+    }
+  }
+
+  // Fallback to random order if constrained assignment unexpectedly fails.
+  const fallback = shuffled(CATAN_NUMBERS);
+  numberedIndexes.forEach((idx, i) => {
+    assigned[idx] = fallback[i];
+  });
+  return assigned;
+}
+
+function generateCatanBoardLayout() {
+  const resources = assignResourcesWithoutAdjacentDoubles();
+  const numberAssignments = assignNumbersWithoutAdjacentDoubles(resources);
+
+  return CATAN_SLOT_LAYOUT.map((slot, idx) => {
+    const resource = resources[idx];
+    const isDesert = resource === "desert";
+    return {
+      id: `tile-${slot.row}-${slot.col}`,
+      row: slot.row,
+      col: slot.col,
+      resource,
+      number: isDesert ? null : numberAssignments[idx]
+    };
+  });
 }
 
 function CatanTableView({ onBackToMenu }) {
   const [tiles, setTiles] = useState(() => generateCatanBoardLayout());
   const [selectedAction, setSelectedAction] = useState("");
-  const [barbarianStep, setBarbarianStep] = useState(0);
-  const lowerRowStart = Math.floor(CATAN_ROW_LENGTHS.length / 2);
+  const [barbarianStep] = useState(0);
 
   const tilesByRow = CATAN_ROW_LENGTHS.map((_, row) => tiles.filter((tile) => tile.row === row));
 
@@ -1015,12 +1204,6 @@ function CatanTableView({ onBackToMenu }) {
   function handleBoardAction(action) {
     if (action === "reset-board") {
       resetBoard();
-    } else if (action === "barbarian-back") {
-      setBarbarianStep((step) => Math.max(0, step - 1));
-    } else if (action === "barbarian-forward") {
-      setBarbarianStep((step) => Math.min(BARBARIAN_TRACK_STEPS.length - 1, step + 1));
-    } else if (action === "barbarian-reset") {
-      setBarbarianStep(0);
     }
     setSelectedAction("");
   }
@@ -1158,6 +1341,25 @@ function CatanTableView({ onBackToMenu }) {
           display: flex;
           align-items: center;
           justify-content: center;
+          overflow: hidden;
+        }
+        .ttc-tile::before {
+          content: "";
+          position: absolute;
+          inset: -18%;
+          background-image: var(--ttc-texture);
+          background-size: cover;
+          background-position: center;
+          transform: rotate(-90deg);
+          transform-origin: center;
+          z-index: 0;
+        }
+        .ttc-tile::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(165deg, rgba(255,255,255,0.18), rgba(0,0,0,0.18));
+          z-index: 1;
         }
         .ttc-number {
           width: clamp(42px, 5.3vw, 68px);
@@ -1173,6 +1375,7 @@ function CatanTableView({ onBackToMenu }) {
           letter-spacing: 0.2px;
           color: #2c3139;
           z-index: 2;
+          transform: rotate(-90deg);
         }
         .ttc-number.hot {
           color: #b02f2f;
@@ -1241,6 +1444,7 @@ function CatanTableView({ onBackToMenu }) {
           font-size: 1.65rem;
           line-height: 1;
           filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
+          transform: rotate(-90deg);
         }
         .ttc-track-arrow {
           position: absolute;
@@ -1270,7 +1474,6 @@ function CatanTableView({ onBackToMenu }) {
         <header className="ttc-header">
           <div>
             <h1 className="ttc-title">Catan Table Board</h1>
-            <p className="ttc-subtext">5-6 player island ring with Cities and Knights barbarian track.</p>
           </div>
           <div className="ttc-head-actions">
             <button className="ttc-btn" onClick={onBackToMenu}>Game Menu</button>
@@ -1282,11 +1485,7 @@ function CatanTableView({ onBackToMenu }) {
             >
               <option value="">Board Actions</option>
               <option value="reset-board">Reset Board Layout</option>
-              <option value="barbarian-back">Barbarian -1</option>
-              <option value="barbarian-forward">Barbarian +1</option>
-              <option value="barbarian-reset">Reset Barbarian</option>
             </select>
-            <span className="ttc-pill">Barbarian: {barbarianStep}/{BARBARIAN_TRACK_STEPS.length - 1}</span>
             <span className="ttc-pill">GoDice integration: next</span>
           </div>
         </header>
@@ -1298,7 +1497,7 @@ function CatanTableView({ onBackToMenu }) {
                   <div
                     className="ttc-row"
                     key={`row-${rowIdx}`}
-                    style={rowIdx >= lowerRowStart ? { transform: "translateX(calc(var(--ttc-tile-w) * -0.5))" } : undefined}
+                    style={rowIdx >= CATAN_LOWER_ROW_START ? { transform: "translateX(calc(var(--ttc-tile-w) * -0.5))" } : undefined}
                   >
                     {rowTiles.map((tile) => {
                       const meta = CATAN_RESOURCE_META[tile.resource] || CATAN_RESOURCE_META.desert;
@@ -1309,13 +1508,11 @@ function CatanTableView({ onBackToMenu }) {
                           key={tile.id}
                           className="ttc-tile"
                           title={meta.label}
-                          style={{
-                            backgroundColor: meta.color,
-                            backgroundImage: `linear-gradient(165deg, rgba(255,255,255,0.18), rgba(0,0,0,0.18)), url(${meta.texture})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "center"
-                          }}
-                        >
+                      style={{
+                        backgroundColor: meta.color,
+                        "--ttc-texture": `url(${meta.texture})`
+                      }}
+                    >
                           {typeof tile.number === "number" ? (
                             <div className={`ttc-number${hotNumber ? " hot" : ""}`}>{tile.number}</div>
                           ) : (
