@@ -2,6 +2,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
 import { ActionType, hexWithinRange } from "../../shared/game.js";
+import forestTexture from "./assets/catan-textures/forest.svg";
+import pastureTexture from "./assets/catan-textures/pasture.svg";
+import wheatTexture from "./assets/catan-textures/wheat.svg";
+import hillsTexture from "./assets/catan-textures/hills.svg";
+import mountainsTexture from "./assets/catan-textures/mountains.svg";
+import desertTexture from "./assets/catan-textures/desert.svg";
 
 const mono = {
   fontFamily:
@@ -45,12 +51,11 @@ const TABLE_GAMES = [
     badges: ["Live now", "4 players", "Tactical"]
   },
   {
-    id: "prototype-slot-02",
-    title: "Prototype Slot 02",
-    subtitle: "Tonight's new game lane",
-    description: "Reserved card for the second table game you want to start building tonight.",
-    badges: ["Coming soon", "Design lane", "Prototype"],
-    disabled: true
+    id: "catan",
+    title: "Catan",
+    subtitle: "Physical pieces mode",
+    description: "Classic 19-hex board with randomized number tokens for physical cards and pieces on top of the table display.",
+    badges: ["No phones", "Board randomizer", "GoDice next"]
   }
 ];
 
@@ -928,6 +933,436 @@ function DungeonTableView({ onBackToMenu }) {
   );
 }
 
+const CATAN_ROW_LENGTHS = [4, 5, 6, 6, 5, 4];
+const CATAN_RESOURCES = [
+  "wood", "wood", "wood", "wood", "wood", "wood",
+  "brick", "brick", "brick", "brick", "brick",
+  "sheep", "sheep", "sheep", "sheep", "sheep", "sheep",
+  "wheat", "wheat", "wheat", "wheat", "wheat", "wheat",
+  "ore", "ore", "ore", "ore", "ore",
+  "desert", "desert"
+];
+const CATAN_NUMBERS = [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12];
+const BARBARIAN_TRACK_STEPS = ["Sea", "Approach", "Near", "Sighting", "Alarm", "Coast", "Attack"];
+const BARBARIAN_TRACK_NODE_LAYOUT = [
+  { x: 20, y: 16 },
+  { x: 47, y: 16 },
+  { x: 74, y: 16 },
+  { x: 47, y: 44 },
+  { x: 20, y: 76 },
+  { x: 47, y: 76 },
+  { x: 74, y: 76 }
+];
+const BARBARIAN_TRACK_ARROWS = [
+  { x: 33.5, y: 16, rot: 0 },
+  { x: 60.5, y: 16, rot: 0 },
+  { x: 60.5, y: 30, rot: 120 },
+  { x: 33.5, y: 60, rot: 130 },
+  { x: 33.5, y: 76, rot: 0 },
+  { x: 60.5, y: 76, rot: 0 }
+];
+
+const CATAN_RESOURCE_META = {
+  wood: { label: "Forest", color: "#2f6d45", texture: forestTexture },
+  brick: { label: "Hills", color: "#b86a4a", texture: hillsTexture },
+  sheep: { label: "Pasture", color: "#b7df70", texture: pastureTexture },
+  wheat: { label: "Fields", color: "#d8b454", texture: wheatTexture },
+  ore: { label: "Mountains", color: "#7d8899", texture: mountainsTexture },
+  desert: { label: "Desert", color: "#d0bc96", texture: desertTexture }
+};
+
+function shuffled(list) {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+function generateCatanBoardLayout() {
+  const resources = shuffled(CATAN_RESOURCES);
+  const numbers = shuffled(CATAN_NUMBERS);
+  let numberIdx = 0;
+
+  return CATAN_ROW_LENGTHS.flatMap((count, row) =>
+    Array.from({ length: count }).map((_, col) => {
+      const resource = resources.shift();
+      const isDesert = resource === "desert";
+      return {
+        id: `tile-${row}-${col}`,
+        row,
+        col,
+        resource,
+        number: isDesert ? null : numbers[numberIdx++]
+      };
+    })
+  );
+}
+
+function CatanTableView({ onBackToMenu }) {
+  const [tiles, setTiles] = useState(() => generateCatanBoardLayout());
+  const [selectedAction, setSelectedAction] = useState("");
+  const [barbarianStep, setBarbarianStep] = useState(0);
+  const lowerRowStart = Math.floor(CATAN_ROW_LENGTHS.length / 2);
+
+  const tilesByRow = CATAN_ROW_LENGTHS.map((_, row) => tiles.filter((tile) => tile.row === row));
+
+  function resetBoard() {
+    setTiles(generateCatanBoardLayout());
+  }
+
+  function handleBoardAction(action) {
+    if (action === "reset-board") {
+      resetBoard();
+    } else if (action === "barbarian-back") {
+      setBarbarianStep((step) => Math.max(0, step - 1));
+    } else if (action === "barbarian-forward") {
+      setBarbarianStep((step) => Math.min(BARBARIAN_TRACK_STEPS.length - 1, step + 1));
+    } else if (action === "barbarian-reset") {
+      setBarbarianStep(0);
+    }
+    setSelectedAction("");
+  }
+
+  return (
+    <div className="ttc-root">
+      <style>{`
+        :root {
+          --ttc-ink: #12283c;
+          --ttc-sub: #587288;
+          --ttc-border: rgba(16, 35, 52, 0.14);
+          --ttc-sea-1: #cbe7f5;
+          --ttc-sea-2: #dff2ff;
+        }
+        html, body, #root {
+          margin: 0;
+          width: 100%;
+          min-height: 100%;
+        }
+        body {
+          background: linear-gradient(160deg, #edf8ff 0%, #dbeefc 56%, #e7f4f5 100%);
+        }
+        .ttc-root {
+          min-height: 100dvh;
+          box-sizing: border-box;
+          padding: 16px;
+          color: var(--ttc-ink);
+          font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+          background:
+            radial-gradient(circle at 10% 0%, rgba(40, 151, 184, 0.2), transparent 36%),
+            radial-gradient(circle at 90% 0%, rgba(64, 180, 130, 0.17), transparent 40%),
+            linear-gradient(160deg, #f7fcff 0%, #ebf4fb 54%, #edf7f4 100%);
+        }
+        .ttc-shell {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .ttc-header {
+          border: 1px solid var(--ttc-border);
+          border-radius: 18px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.74));
+          box-shadow: 0 16px 38px rgba(7, 28, 46, 0.12);
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .ttc-title {
+          margin: 0;
+          font-size: clamp(1.2rem, 2.8vw, 1.9rem);
+          letter-spacing: 0.2px;
+        }
+        .ttc-subtext {
+          margin: 4px 0 0;
+          color: var(--ttc-sub);
+          font-weight: 600;
+          font-size: 0.9rem;
+        }
+        .ttc-head-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .ttc-btn {
+          border: 1px solid rgba(18, 36, 58, 0.16);
+          background: #ffffff;
+          color: var(--ttc-ink);
+          border-radius: 10px;
+          font-weight: 700;
+          padding: 8px 12px;
+          cursor: pointer;
+        }
+        .ttc-pill {
+          border-radius: 999px;
+          border: 1px solid rgba(18, 36, 58, 0.14);
+          background: rgba(255,255,255,0.8);
+          padding: 4px 10px;
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: #426178;
+        }
+        .ttc-select {
+          border: 1px solid rgba(18, 36, 58, 0.18);
+          background: #ffffff;
+          color: #12314a;
+          border-radius: 10px;
+          font-weight: 700;
+          padding: 8px 34px 8px 10px;
+          cursor: pointer;
+          min-width: 170px;
+        }
+        .ttc-board-wrap {
+          border: 1px solid var(--ttc-border);
+          border-radius: 20px;
+          background: linear-gradient(180deg, rgba(235, 247, 253, 0.9), rgba(205, 231, 245, 0.88));
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 20px 44px rgba(9, 32, 52, 0.16);
+          user-select: none;
+          padding: clamp(10px, 2.4vw, 18px);
+          position: relative;
+        }
+        .ttc-island-shell {
+          width: min(100%, 1100px);
+          margin: 0 auto;
+          box-sizing: border-box;
+          padding-right: clamp(180px, 26vw, 330px);
+        }
+        .ttc-board {
+          --ttc-tile-w: clamp(82px, 9.2vw, 128px);
+          --ttc-tile-h: clamp(92px, 11vw, 148px);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          max-width: 1200px;
+          margin: 0 auto 0 0;
+        }
+        .ttc-row {
+          display: flex;
+          justify-content: center;
+        }
+        .ttc-row + .ttc-row {
+          margin-top: calc(var(--ttc-tile-h) * -0.25);
+        }
+        .ttc-tile {
+          width: var(--ttc-tile-w);
+          height: var(--ttc-tile-h);
+          clip-path: polygon(50% 2%, 98% 25%, 98% 75%, 50% 98%, 2% 75%, 2% 25%);
+          border: 2px solid rgba(35, 41, 49, 0.25);
+          box-shadow: inset 0 2px 8px rgba(255,255,255,0.35), 0 10px 14px rgba(6, 18, 31, 0.18);
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .ttc-number {
+          width: clamp(42px, 5.3vw, 68px);
+          height: clamp(42px, 5.3vw, 68px);
+          border-radius: 50%;
+          background: rgba(246, 239, 217, 0.74);
+          border: 2px solid rgba(92, 78, 47, 0.26);
+          box-shadow: 0 3px 7px rgba(53, 43, 20, 0.25);
+          display: grid;
+          place-items: center;
+          font-weight: 900;
+          font-size: clamp(1.15rem, 2vw, 1.9rem);
+          letter-spacing: 0.2px;
+          color: #2c3139;
+          z-index: 2;
+        }
+        .ttc-number.hot {
+          color: #b02f2f;
+        }
+        .ttc-desert {
+          font-size: clamp(0.56rem, 1vw, 0.75rem);
+          font-weight: 900;
+          letter-spacing: 0.7px;
+          text-transform: uppercase;
+          color: rgba(46, 41, 26, 0.74);
+        }
+        .ttc-track {
+          border: none;
+          border-radius: 0;
+          background: transparent;
+          box-shadow: none;
+          padding: 0;
+          overflow: visible;
+          position: absolute;
+          right: clamp(8px, 1.6vw, 16px);
+          bottom: clamp(8px, 1.6vw, 16px);
+          width: min(40vw, 390px);
+          z-index: 4;
+        }
+        .ttc-track-board {
+          position: relative;
+          margin-top: 0;
+          min-height: 360px;
+          border-radius: 22px;
+          border: 1px solid rgba(26, 93, 126, 0.35);
+          background:
+            radial-gradient(circle at 18% 10%, rgba(255,255,255,0.35), rgba(255,255,255,0) 45%),
+            repeating-linear-gradient(-14deg, rgba(255,255,255,0.1) 0 8px, rgba(255,255,255,0) 8px 20px),
+            linear-gradient(165deg, #42a3cf 0%, #2184b2 45%, #1c6f98 100%);
+          box-shadow: inset 0 2px 0 rgba(255,255,255,0.35), inset 0 -8px 16px rgba(15, 53, 75, 0.24);
+        }
+        .ttc-track-node {
+          position: absolute;
+          width: 72px;
+          height: 72px;
+          transform: translate(-50%, -50%);
+          border-radius: 50%;
+          border: 3px solid rgba(216, 238, 248, 0.88);
+          background: rgba(255, 255, 255, 0.2);
+          display: grid;
+          place-items: center;
+          backdrop-filter: blur(2px);
+          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.2);
+          color: rgba(17, 53, 75, 0.9);
+          z-index: 2;
+        }
+        .ttc-track-node.done {
+          background: rgba(255, 255, 255, 0.36);
+          border-color: rgba(228, 245, 252, 0.95);
+        }
+        .ttc-track-node.active {
+          border-color: rgba(228, 245, 252, 0.95);
+          background: rgba(255, 255, 255, 0.36);
+          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.2);
+        }
+        .ttc-track-node.attack {
+          border-color: rgba(255, 230, 203, 0.95);
+          background: radial-gradient(circle at 32% 22%, rgba(255, 185, 132, 0.62), rgba(255,255,255,0.3) 68%);
+        }
+        .ttc-track-icon {
+          font-size: 1.65rem;
+          line-height: 1;
+          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
+        }
+        .ttc-track-arrow {
+          position: absolute;
+          transform: translate(-50%, -50%);
+          color: rgba(240, 250, 255, 0.95);
+          font-size: 1.55rem;
+          font-weight: 800;
+          text-shadow: 0 1px 2px rgba(15, 58, 82, 0.35);
+          z-index: 1;
+        }
+        @media (max-width: 1100px) {
+          .ttc-island-shell {
+            padding-right: 0;
+          }
+          .ttc-board {
+            margin: 0 auto;
+          }
+          .ttc-track {
+            position: static;
+            width: min(100%, 360px);
+            margin: 10px auto 0;
+          }
+        }
+      `}</style>
+
+      <div className="ttc-shell">
+        <header className="ttc-header">
+          <div>
+            <h1 className="ttc-title">Catan Table Board</h1>
+            <p className="ttc-subtext">5-6 player island ring with Cities and Knights barbarian track.</p>
+          </div>
+          <div className="ttc-head-actions">
+            <button className="ttc-btn" onClick={onBackToMenu}>Game Menu</button>
+            <select
+              className="ttc-select"
+              aria-label="Board actions"
+              value={selectedAction}
+              onChange={(ev) => handleBoardAction(ev.target.value)}
+            >
+              <option value="">Board Actions</option>
+              <option value="reset-board">Reset Board Layout</option>
+              <option value="barbarian-back">Barbarian -1</option>
+              <option value="barbarian-forward">Barbarian +1</option>
+              <option value="barbarian-reset">Reset Barbarian</option>
+            </select>
+            <span className="ttc-pill">Barbarian: {barbarianStep}/{BARBARIAN_TRACK_STEPS.length - 1}</span>
+            <span className="ttc-pill">GoDice integration: next</span>
+          </div>
+        </header>
+
+        <main className="ttc-board-wrap">
+          <div className="ttc-island-shell">
+              <div className="ttc-board" aria-label="Catan board">
+                {tilesByRow.map((rowTiles, rowIdx) => (
+                  <div
+                    className="ttc-row"
+                    key={`row-${rowIdx}`}
+                    style={rowIdx >= lowerRowStart ? { transform: "translateX(calc(var(--ttc-tile-w) * -0.5))" } : undefined}
+                  >
+                    {rowTiles.map((tile) => {
+                      const meta = CATAN_RESOURCE_META[tile.resource] || CATAN_RESOURCE_META.desert;
+                      const hotNumber = tile.number === 6 || tile.number === 8;
+
+                      return (
+                        <div
+                          key={tile.id}
+                          className="ttc-tile"
+                          title={meta.label}
+                          style={{
+                            backgroundColor: meta.color,
+                            backgroundImage: `linear-gradient(165deg, rgba(255,255,255,0.18), rgba(0,0,0,0.18)), url(${meta.texture})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center"
+                          }}
+                        >
+                          {typeof tile.number === "number" ? (
+                            <div className={`ttc-number${hotNumber ? " hot" : ""}`}>{tile.number}</div>
+                          ) : (
+                            <div className="ttc-desert">No token</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+          </div>
+
+          <div className="ttc-track" aria-label="Cities and Knights barbarian track">
+            <div className="ttc-track-board">
+              {BARBARIAN_TRACK_ARROWS.map((arrow, idx) => (
+                <div
+                  key={`barb-arrow-${idx}`}
+                  className="ttc-track-arrow"
+                  style={{ left: `${arrow.x}%`, top: `${arrow.y}%`, transform: `translate(-50%, -50%) rotate(${arrow.rot}deg)` }}
+                  aria-hidden="true"
+                >
+                  ➜
+                </div>
+              ))}
+              {BARBARIAN_TRACK_STEPS.map((label, idx) => {
+                const point = BARBARIAN_TRACK_NODE_LAYOUT[idx];
+                const isAttack = idx === BARBARIAN_TRACK_STEPS.length - 1;
+                return (
+                  <div
+                    key={`barb-node-${label}`}
+                    className={`ttc-track-node${idx < barbarianStep ? " done" : ""}${idx === barbarianStep ? " active" : ""}${isAttack ? " attack" : ""}`}
+                    title={label}
+                    style={{ left: `${point.x}%`, top: `${point.y}%` }}
+                  >
+                    <span className="ttc-track-icon">{isAttack ? "🔥" : "⛵"}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function GameMenu({ onOpenGame }) {
   return (
     <div className="ttg-root">
@@ -1048,7 +1483,7 @@ function GameMenu({ onOpenGame }) {
       <div className="ttg-shell">
         <header className="ttg-head">
           <h1>Table Game Library</h1>
-          <p>Choose a game to launch on the table. The second card is already reserved so you can start tonight's new prototype immediately.</p>
+          <p>Choose a game to launch on the table. Catan now runs as a table-only board so you can use physical pieces on top of the display.</p>
         </header>
 
         <section className="ttg-grid" aria-label="Table games">
@@ -1080,6 +1515,9 @@ export default function App() {
 
   if (activeGameId === "touchtable-dungeon") {
     return <DungeonTableView onBackToMenu={() => setActiveGameId(null)} />;
+  }
+  if (activeGameId === "catan") {
+    return <CatanTableView onBackToMenu={() => setActiveGameId(null)} />;
   }
 
   return (

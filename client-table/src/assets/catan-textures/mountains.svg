@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9aa7ba"/>
+      <stop offset="100%" stop-color="#667286"/>
+    </linearGradient>
+    <radialGradient id="frost" cx="0.36" cy="0.18" r="0.86">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#frost)"/>
+  <g stroke="#b4bfce" stroke-opacity="0.26" stroke-width="2">
+    <polygon points="36,438 186,134 336,438" fill="#536074" fill-opacity="0.64"/>
+    <polygon points="196,446 356,176 506,446" fill="#445268" fill-opacity="0.68"/>
+  </g>
+  <g fill="#d7e0ea" fill-opacity="0.82">
+    <polygon points="186,134 158,190 214,190"/>
+    <polygon points="356,176 324,236 388,236"/>
+  </g>
+  <g fill="#2f3a4d" fill-opacity="0.24">
+    <polygon points="186,134 226,260 198,438"/>
+    <polygon points="356,176 390,286 362,446"/>
+  </g>
+</svg>
