@@ -36,7 +36,25 @@ function statusColor(status) {
   return "#7a8a99";
 }
 
-export default function App() {
+const TABLE_GAMES = [
+  {
+    id: "touchtable-dungeon",
+    title: "TouchTable Dungeon",
+    subtitle: "Co-op tactical crawl",
+    description: "A shared-board dungeon run with live phones, turn AP, and monster encounters.",
+    badges: ["Live now", "4 players", "Tactical"]
+  },
+  {
+    id: "prototype-slot-02",
+    title: "Prototype Slot 02",
+    subtitle: "Tonight's new game lane",
+    description: "Reserved card for the second table game you want to start building tonight.",
+    badges: ["Coming soon", "Design lane", "Prototype"],
+    disabled: true
+  }
+];
+
+function DungeonTableView({ onBackToMenu }) {
   const [wsUrl] = useState(makeWsUrl());
   const [status, setStatus] = useState("disconnected");
   const [sessionInfo, setSessionInfo] = useState(null);
@@ -595,6 +613,9 @@ export default function App() {
             <h1 className="ttd-title">TouchTable Dungeon</h1>
           </div>
           <div className="ttd-header-meta">
+            <button className="ttd-btn" onClick={onBackToMenu}>
+              Game Menu
+            </button>
             <span className="ttd-pill">AP: <span style={mono}>{apRemaining}/{apMax}</span></span>
             <div className="ttd-status">
               <span className="ttd-dot" style={{ background: statusColor(status) }} />
@@ -904,5 +925,168 @@ export default function App() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function GameMenu({ onOpenGame }) {
+  return (
+    <div className="ttg-root">
+      <style>{`
+        :root {
+          --ttg-ink: #10263a;
+          --ttg-sub: #597188;
+          --ttg-border: rgba(20, 38, 60, 0.14);
+          --ttg-card-bg: rgba(255, 255, 255, 0.8);
+          --ttg-accent: #146f8f;
+          --ttg-accent-2: #27a378;
+        }
+        html, body, #root {
+          margin: 0;
+          width: 100%;
+          min-height: 100%;
+        }
+        body {
+          background:
+            radial-gradient(circle at 0% 0%, rgba(30, 130, 170, 0.18), transparent 40%),
+            radial-gradient(circle at 100% 0%, rgba(42, 173, 117, 0.16), transparent 42%),
+            linear-gradient(160deg, #f7fcff 0%, #eef4fa 46%, #eff7f3 100%);
+        }
+        .ttg-root {
+          min-height: 100dvh;
+          box-sizing: border-box;
+          padding: clamp(16px, 3vw, 30px);
+          color: var(--ttg-ink);
+          font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+        }
+        .ttg-shell {
+          max-width: 1160px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+        }
+        .ttg-head {
+          border: 1px solid var(--ttg-border);
+          border-radius: 22px;
+          background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
+          box-shadow: 0 24px 60px rgba(10, 34, 54, 0.14);
+          padding: clamp(14px, 2.8vw, 24px);
+        }
+        .ttg-head h1 {
+          margin: 0 0 6px;
+          font-size: clamp(1.38rem, 3vw, 2.2rem);
+          letter-spacing: 0.2px;
+        }
+        .ttg-head p {
+          margin: 0;
+          color: var(--ttg-sub);
+          max-width: 680px;
+          font-size: clamp(0.95rem, 1.8vw, 1.05rem);
+        }
+        .ttg-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 14px;
+        }
+        .ttg-card {
+          border: 1px solid var(--ttg-border);
+          border-radius: 18px;
+          background:
+            linear-gradient(145deg, rgba(255, 255, 255, 0.95), var(--ttg-card-bg)),
+            repeating-linear-gradient(-45deg, rgba(255,255,255,0.1) 0 10px, rgba(255,255,255,0) 10px 20px);
+          box-shadow: 0 16px 34px rgba(10, 34, 54, 0.12);
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .ttg-card h2 {
+          margin: 0;
+          font-size: 1.18rem;
+        }
+        .ttg-subtitle {
+          margin: 0;
+          color: var(--ttg-sub);
+          font-weight: 700;
+          font-size: 0.9rem;
+          letter-spacing: 0.4px;
+          text-transform: uppercase;
+        }
+        .ttg-desc {
+          margin: 0;
+          color: #38506a;
+        }
+        .ttg-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+        .ttg-tag {
+          border-radius: 999px;
+          border: 1px solid rgba(18, 36, 58, 0.14);
+          background: rgba(255, 255, 255, 0.84);
+          padding: 4px 10px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #36516b;
+        }
+        .ttg-open {
+          border: none;
+          border-radius: 10px;
+          background: linear-gradient(135deg, var(--ttg-accent), var(--ttg-accent-2));
+          color: #fff;
+          font-weight: 800;
+          padding: 10px 12px;
+          cursor: pointer;
+        }
+        .ttg-open:disabled {
+          cursor: not-allowed;
+          background: linear-gradient(135deg, #a2adbb, #7f8a99);
+        }
+      `}</style>
+
+      <div className="ttg-shell">
+        <header className="ttg-head">
+          <h1>Table Game Library</h1>
+          <p>Choose a game to launch on the table. The second card is already reserved so you can start tonight's new prototype immediately.</p>
+        </header>
+
+        <section className="ttg-grid" aria-label="Table games">
+          {TABLE_GAMES.map((game) => (
+            <article className="ttg-card" key={game.id}>
+              <div>
+                <p className="ttg-subtitle">{game.subtitle}</p>
+                <h2>{game.title}</h2>
+              </div>
+              <p className="ttg-desc">{game.description}</p>
+              <div className="ttg-tags">
+                {game.badges.map((badge) => (
+                  <span key={badge} className="ttg-tag">{badge}</span>
+                ))}
+              </div>
+              <button className="ttg-open" onClick={() => onOpenGame(game)} disabled={game.disabled}>
+                {game.disabled ? "Coming Soon" : "Open on Table"}
+              </button>
+            </article>
+          ))}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [activeGameId, setActiveGameId] = useState(null);
+
+  if (activeGameId === "touchtable-dungeon") {
+    return <DungeonTableView onBackToMenu={() => setActiveGameId(null)} />;
+  }
+
+  return (
+    <GameMenu
+      onOpenGame={(game) => {
+        if (!game?.disabled) setActiveGameId(game.id);
+      }}
+    />
   );
 }
