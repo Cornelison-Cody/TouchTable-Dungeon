@@ -988,8 +988,9 @@ const GODICE_FACE_NORMALS = [
 ];
 const GODICE_ROLL_COMBINE_WINDOW_MS = 7000;
 const GODICE_ROLL_DEDUPE_MS = 1200;
-const GODICE_FLASH_MS = 1400;
-const GODICE_CALIBRATION_STORAGE_KEY = "ttd_godice_calibration_v1";
+const GODICE_CALIBRATION_STORAGE_KEY = "ttd_godice_calibration_v2";
+const GODICE_CALIBRATION_LEGACY_KEY = "ttd_godice_calibration_v1";
+const GODICE_LABEL_STORAGE_KEY = "ttd_godice_die_labels_v1";
 
 function toSignedByte(raw) {
   return raw > 127 ? raw - 256 : raw;
@@ -1082,25 +1083,48 @@ function isCompleteGoDiceCalibration(input) {
   return seenFaces.size === 6;
 }
 
+function normalizeCalibrationMapSet(input) {
+  const out = {};
+  if (!input || typeof input !== "object") return out;
+
+  for (const [key, maybeMap] of Object.entries(input)) {
+    const normalized = normalizeGoDiceCalibrationMap(maybeMap);
+    if (isCompleteGoDiceCalibration(normalized)) {
+      out[key] = normalized;
+    }
+  }
+  return out;
+}
+
 function loadGoDiceCalibrations() {
-  if (typeof window === "undefined") return {};
+  if (typeof window === "undefined") return { byLabel: {}, byId: {} };
 
   try {
     const raw = window.localStorage.getItem(GODICE_CALIBRATION_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-
-    const calibrations = {};
-    for (const [dieId, maybeMap] of Object.entries(parsed)) {
-      const normalized = normalizeGoDiceCalibrationMap(maybeMap);
-      if (isCompleteGoDiceCalibration(normalized)) {
-        calibrations[dieId] = normalized;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return {
+          byLabel: normalizeCalibrationMapSet(parsed.byLabel),
+          byId: normalizeCalibrationMapSet(parsed.byId)
+        };
       }
     }
-    return calibrations;
   } catch {
-    return {};
+    // ignore
+  }
+
+  try {
+    const legacyRaw = window.localStorage.getItem(GODICE_CALIBRATION_LEGACY_KEY);
+    if (!legacyRaw) return { byLabel: {}, byId: {} };
+    const parsed = JSON.parse(legacyRaw);
+    if (!parsed || typeof parsed !== "object") return { byLabel: {}, byId: {} };
+    return {
+      byLabel: {},
+      byId: normalizeCalibrationMapSet(parsed)
+    };
+  } catch {
+    return { byLabel: {}, byId: {} };
   }
 }
 
@@ -1108,7 +1132,45 @@ function saveGoDiceCalibrations(calibrations) {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(GODICE_CALIBRATION_STORAGE_KEY, JSON.stringify(calibrations || {}));
+    const payload = calibrations && typeof calibrations === "object" ? calibrations : { byLabel: {}, byId: {} };
+    window.localStorage.setItem(GODICE_CALIBRATION_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore storage failures (private mode, quota, etc.)
+  }
+}
+
+function normalizeDieLabel(label) {
+  if (typeof label !== "string") return "";
+  return label.trim().slice(0, 24);
+}
+
+function loadGoDiceLabels() {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(GODICE_LABEL_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+
+    const labels = {};
+    for (const [dieId, value] of Object.entries(parsed)) {
+      const normalized = normalizeDieLabel(value);
+      if (normalized) {
+        labels[dieId] = normalized;
+      }
+    }
+    return labels;
+  } catch {
+    return {};
+  }
+}
+
+function saveGoDiceLabels(labels) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(GODICE_LABEL_STORAGE_KEY, JSON.stringify(labels || {}));
   } catch {
     // ignore storage failures (private mode, quota, etc.)
   }
@@ -1336,6 +1398,7 @@ function CatanTableView({ onBackToMenu }) {
   const [goDiceStatus, setGoDiceStatus] = useState("Disconnected");
   const [goDiceError, setGoDiceError] = useState(null);
   const [dieCalibrations, setDieCalibrations] = useState(() => loadGoDiceCalibrations());
+  const [dieLabels, setDieLabels] = useState(() => loadGoDiceLabels());
   const [connectedDice, setConnectedDice] = useState([]);
   const [lastRollSummary, setLastRollSummary] = useState(null);
   const [flashingNumber, setFlashingNumber] = useState(null);
@@ -1344,7 +1407,7 @@ function CatanTableView({ onBackToMenu }) {
 
   const diceConnectionsRef = useRef(new Map());
   const dieCalibrationsRef = useRef(dieCalibrations);
-  const flashTimeoutRef = useRef(null);
+  const dieLabelsRef = useRef(dieLabels);
   const lastCombinedSignatureRef = useRef("");
   const nextRollVersionRef = useRef(1);
   const calibrationSessionRef = useRef(null);
@@ -1352,19 +1415,64 @@ function CatanTableView({ onBackToMenu }) {
   const goDiceSupported = typeof navigator !== "undefined" && !!navigator.bluetooth;
 
   const tilesByRow = CATAN_ROW_LENGTHS.map((_, row) => tiles.filter((tile) => tile.row === row));
+  const savedLabelOptions = Object.keys(dieCalibrations?.byLabel || {}).sort((a, b) => a.localeCompare(b));
 
   function updateCalibrationSession(nextSession) {
     calibrationSessionRef.current = nextSession;
     setCalibrationSession(nextSession);
   }
 
-  function getCalibrationForDie(dieId) {
-    const calibration = dieCalibrationsRef.current?.[dieId];
-    return isCompleteGoDiceCalibration(calibration) ? calibration : null;
+  function getLabelForDie(dieId) {
+    return dieLabelsRef.current?.[dieId] || "";
   }
 
-  function mapRawDieValue(dieId, rawValue) {
-    const calibration = getCalibrationForDie(dieId);
+  function setLabelForDie(dieId, label) {
+    const normalized = normalizeDieLabel(label);
+    const nextLabels = { ...(dieLabelsRef.current || {}) };
+    if (normalized) {
+      nextLabels[dieId] = normalized;
+    } else {
+      delete nextLabels[dieId];
+    }
+
+    dieLabelsRef.current = nextLabels;
+    setDieLabels(nextLabels);
+
+    const entry = diceConnectionsRef.current.get(dieId);
+    if (entry) {
+      entry.label = normalized;
+      if (typeof entry.lastRawValue === "number") {
+        entry.lastValue = mapRawDieValue(dieId, entry.lastRawValue, normalized);
+      }
+    }
+    if (normalized) {
+      setGoDiceError(null);
+    }
+    refreshDiceStatus();
+  }
+
+  function getCalibrationForDie(dieId) {
+    const label = getLabelForDie(dieId);
+    const store = dieCalibrationsRef.current || {};
+    const byLabel = store.byLabel || {};
+    const byId = store.byId || {};
+    const fromLabel = label ? byLabel[label] : null;
+    if (isCompleteGoDiceCalibration(fromLabel)) return fromLabel;
+
+    const fromId = byId[dieId];
+    return isCompleteGoDiceCalibration(fromId) ? fromId : null;
+  }
+
+  function mapRawDieValue(dieId, rawValue, labelOverride) {
+    let calibration = null;
+    if (labelOverride) {
+      const store = dieCalibrationsRef.current || {};
+      const byLabel = store.byLabel || {};
+      calibration = byLabel[labelOverride];
+    }
+    if (!calibration) {
+      calibration = getCalibrationForDie(dieId);
+    }
     if (!calibration) return rawValue;
     const mapped = Number(calibration[String(rawValue)]);
     return mapped >= 1 && mapped <= 6 ? mapped : rawValue;
@@ -1372,13 +1480,21 @@ function CatanTableView({ onBackToMenu }) {
 
   function refreshDiceStatus() {
     const dice = [...diceConnectionsRef.current.values()]
-      .map((entry) => ({
-        id: entry.id,
-        name: entry.device?.name || "GoDice",
-        lastValue: entry.lastValue,
-        calibrated: !!getCalibrationForDie(entry.id)
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .map((entry) => {
+        const label = getLabelForDie(entry.id) || entry.label || "";
+        return {
+          id: entry.id,
+          name: entry.device?.name || "GoDice",
+          label,
+          lastValue: entry.lastValue,
+          calibrated: !!getCalibrationForDie(entry.id)
+        };
+      })
+      .sort((a, b) => {
+        const aKey = (a.label || a.name).toLowerCase();
+        const bKey = (b.label || b.name).toLowerCase();
+        return aKey.localeCompare(bKey);
+      });
 
     setConnectedDice(dice);
     if (!dice.length) {
@@ -1437,10 +1553,6 @@ function CatanTableView({ onBackToMenu }) {
     });
     setFlashingNumber(sum);
     setFlashEpoch((prev) => prev + 1);
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-    flashTimeoutRef.current = setTimeout(() => {
-      setFlashingNumber(null);
-    }, GODICE_FLASH_MS);
   }
 
   function beginCalibration(dieId) {
@@ -1449,10 +1561,16 @@ function CatanTableView({ onBackToMenu }) {
       setGoDiceError("Die not connected.");
       return;
     }
+    const dieLabel = getLabelForDie(dieId);
+    if (!dieLabel) {
+      setGoDiceError("Give this die a label first so calibration persists across restarts.");
+      return;
+    }
 
     const nextSession = {
       dieId,
       dieName: entry.device?.name || "GoDice",
+      dieLabel,
       expectedFace: 1,
       captured: {}
     };
@@ -1464,17 +1582,23 @@ function CatanTableView({ onBackToMenu }) {
     updateCalibrationSession(null);
   }
 
-  function saveCalibrationForDie(dieId, calibrationMap) {
+  function saveCalibrationForDie(dieId, dieLabel, calibrationMap) {
     const normalized = normalizeGoDiceCalibrationMap(calibrationMap);
     if (!isCompleteGoDiceCalibration(normalized)) {
       setGoDiceError("Calibration failed: incomplete side map. Please recalibrate.");
       return;
     }
 
+    const current = dieCalibrationsRef.current || {};
     const nextCalibrations = {
-      ...dieCalibrationsRef.current,
-      [dieId]: normalized
+      byLabel: { ...(current.byLabel || {}) },
+      byId: { ...(current.byId || {}) }
     };
+    if (dieLabel) {
+      nextCalibrations.byLabel[dieLabel] = normalized;
+    } else {
+      nextCalibrations.byId[dieId] = normalized;
+    }
     dieCalibrationsRef.current = nextCalibrations;
 
     const entry = diceConnectionsRef.current.get(dieId);
@@ -1506,7 +1630,7 @@ function CatanTableView({ onBackToMenu }) {
     };
 
     if (session.expectedFace >= 6) {
-      saveCalibrationForDie(dieId, nextCaptured);
+      saveCalibrationForDie(dieId, session.dieLabel, nextCaptured);
       updateCalibrationSession(null);
       setGoDiceError(null);
       refreshDiceStatus();
@@ -1548,8 +1672,9 @@ function CatanTableView({ onBackToMenu }) {
 
     captureCalibrationRoll(dieId, rawRollValue);
 
+    const label = getLabelForDie(dieId);
     entry.lastRawValue = rawRollValue;
-    entry.lastValue = mapRawDieValue(dieId, rawRollValue);
+    entry.lastValue = mapRawDieValue(dieId, rawRollValue, label);
     entry.lastRolledAt = now;
     entry.lastAcceptedAt = now;
     entry.rollVersion = nextRollVersionRef.current;
@@ -1617,6 +1742,7 @@ function CatanTableView({ onBackToMenu }) {
         notifyCharacteristic,
         onNotification,
         onDisconnect,
+        label: getLabelForDie(dieId),
         lastValue: null,
         lastRawValue: null,
         lastRolledAt: 0,
@@ -1662,8 +1788,13 @@ function CatanTableView({ onBackToMenu }) {
     refreshDiceStatus();
   }, [dieCalibrations]);
 
+  useEffect(() => {
+    dieLabelsRef.current = dieLabels;
+    saveGoDiceLabels(dieLabels);
+    refreshDiceStatus();
+  }, [dieLabels]);
+
   useEffect(() => () => {
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
     for (const entry of diceConnectionsRef.current.values()) {
       clearDiceConnection(entry, true);
     }
@@ -1795,6 +1926,22 @@ function CatanTableView({ onBackToMenu }) {
           align-items: center;
           gap: 6px;
         }
+        .ttc-die-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          white-space: nowrap;
+        }
+        .ttc-die-label {
+          border: 1px solid rgba(18, 36, 58, 0.16);
+          border-radius: 999px;
+          padding: 2px 8px;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #2b4a63;
+          background: rgba(255,255,255,0.95);
+          min-width: 90px;
+        }
         .ttc-die-chip.calibrated {
           border-color: rgba(18, 126, 83, 0.34);
           background: rgba(227, 250, 241, 0.92);
@@ -1907,7 +2054,7 @@ function CatanTableView({ onBackToMenu }) {
           color: #b02f2f;
         }
         .ttc-number.flash {
-          animation: ttcRollFlash 0.78s ease-out 2;
+          animation: ttcRollFlash 0.78s ease-out infinite;
           background: rgba(255, 251, 224, 0.95);
           border-color: rgba(170, 137, 56, 0.52);
           box-shadow: 0 0 0 6px rgba(255, 233, 159, 0.38), 0 3px 7px rgba(53, 43, 20, 0.25);
@@ -2013,11 +2160,27 @@ function CatanTableView({ onBackToMenu }) {
             <h1 className="ttc-title">Catan Table Board</h1>
             <p className="ttc-subtext">Connect two GoDice, roll, and matching number tokens will flash.</p>
             {goDiceError ? <div className="ttc-inline-error">{goDiceError}</div> : null}
+            <datalist id="ttc-die-labels">
+              {savedLabelOptions.map((label) => (
+                <option key={label} value={label} />
+              ))}
+            </datalist>
             {connectedDice.length ? (
               <div className="ttc-dice-strip">
                 {connectedDice.map((die) => (
                   <span className={`ttc-die-chip${die.calibrated ? " calibrated" : ""}`} key={die.id}>
-                    {die.name} {typeof die.lastValue === "number" ? `(${die.lastValue})` : "(waiting)"} {die.calibrated ? "calibrated" : "uncalibrated"}
+                    <span className="ttc-die-title">
+                      {die.label ? `${die.label} · ${die.name}` : die.name} {typeof die.lastValue === "number" ? `(${die.lastValue})` : "(waiting)"} {die.calibrated ? "calibrated" : "uncalibrated"}
+                    </span>
+                    <input
+                      className="ttc-die-label"
+                      type="text"
+                      placeholder="Label"
+                      value={die.label || ""}
+                      maxLength={24}
+                      list="ttc-die-labels"
+                      onChange={(event) => setLabelForDie(die.id, event.target.value)}
+                    />
                     <button className="ttc-chip-btn" onClick={() => beginCalibration(die.id)}>
                       Calibrate
                     </button>
@@ -2028,7 +2191,7 @@ function CatanTableView({ onBackToMenu }) {
             {calibrationSession ? (
               <div className="ttc-calibration-card">
                 <div className="ttc-calibration-copy">
-                  Calibrating {calibrationSession.dieName}: roll and leave face <strong>{calibrationSession.expectedFace}</strong> up (step {calibrationSession.expectedFace}/6).
+                  Calibrating {calibrationSession.dieLabel || calibrationSession.dieName}{calibrationSession.dieLabel ? ` (${calibrationSession.dieName})` : ""}: roll and leave face <strong>{calibrationSession.expectedFace}</strong> up (step {calibrationSession.expectedFace}/6).
                 </div>
                 <button className="ttc-chip-btn" onClick={cancelCalibration}>
                   Cancel
