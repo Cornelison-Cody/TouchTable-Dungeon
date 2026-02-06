@@ -3,23 +3,25 @@ import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
 import { ActionType, hexNeighbors } from "../../shared/game.js";
 
 const theme = {
-  bgA: "#eaf6ff",
-  bgB: "#f6efe4",
-  card: "#ffffff",
-  text: "#1d2733",
-  sub: "#5f6d7a",
-  border: "#d2dde8",
-  brand: "#0d8f8a",
-  brandDark: "#096c69",
-  danger: "#d24545",
-  success: "#2e8f52",
-  shadow: "0 12px 28px rgba(20, 40, 65, 0.12)"
+  bgA: "#0f1720",
+  bgB: "#131c26",
+  card: "#141c26",
+  surface: "#18222e",
+  surfaceAlt: "#1c2733",
+  text: "#e6edf4",
+  sub: "#9db0c3",
+  border: "#2a3848",
+  brand: "#20bfb7",
+  brandDark: "#16938c",
+  danger: "#ff6b6b",
+  success: "#4cd68a",
+  shadow: "0 18px 40px rgba(0, 0, 0, 0.45)"
 };
 
 const shellStyle = {
   minHeight: "100vh",
   padding: 16,
-  background: `radial-gradient(circle at 10% -10%, ${theme.bgA}, transparent 45%), radial-gradient(circle at 90% 0%, ${theme.bgB}, transparent 40%), #f7fafc`,
+  background: `radial-gradient(circle at 10% -10%, ${theme.bgA}, transparent 45%), radial-gradient(circle at 90% 0%, ${theme.bgB}, transparent 40%), #0d131a`,
   color: theme.text,
   fontFamily: "Avenir Next, Segoe UI, Helvetica Neue, sans-serif"
 };
@@ -46,10 +48,10 @@ function Icon({ path, size = 16, stroke = "currentColor", fill = "none", strokeW
 }
 
 function StatTile({ icon, label, value, tone = "neutral" }) {
-  const bg = tone === "danger" ? "#ffecec" : tone === "success" ? "#e9f7ef" : "#eef5fb";
-  const color = tone === "danger" ? theme.danger : tone === "success" ? theme.success : "#365772";
+  const bg = tone === "danger" ? "rgba(255, 107, 107, 0.16)" : tone === "success" ? "rgba(76, 214, 138, 0.16)" : theme.surface;
+  const color = tone === "danger" ? theme.danger : tone === "success" ? theme.success : theme.sub;
   return (
-    <div style={{ background: bg, color, borderRadius: 12, padding: "10px 12px", border: "1px solid rgba(0,0,0,0.06)" }}>
+    <div style={{ background: bg, color, borderRadius: 12, padding: "10px 12px", border: `1px solid ${theme.border}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>
         {icon}
         {label}
@@ -207,7 +209,11 @@ export default function App() {
   const MINI_HEX_H = 60;
   const MINI_HEX_POINTS = `${MINI_HEX_W * 0.25},0 ${MINI_HEX_W * 0.75},0 ${MINI_HEX_W},${MINI_HEX_H * 0.5} ${MINI_HEX_W * 0.75},${MINI_HEX_H} ${MINI_HEX_W * 0.25},${MINI_HEX_H} 0,${MINI_HEX_H * 0.5}`;
 
-  const statusTone = status === "connected" ? { bg: "#e9f7ef", color: theme.success } : status === "error" ? { bg: "#ffecec", color: theme.danger } : { bg: "#eef5fb", color: "#365772" };
+  const statusTone = status === "connected"
+    ? { bg: "rgba(76, 214, 138, 0.18)", color: theme.success }
+    : status === "error"
+      ? { bg: "rgba(255, 107, 107, 0.18)", color: theme.danger }
+      : { bg: "rgba(157, 176, 195, 0.16)", color: theme.sub };
 
   useEffect(() => {
     const hit = privateState?.game?.lastHeroDamage;
@@ -238,7 +244,7 @@ export default function App() {
             100% { transform: translate(-50%, -26px) scale(1); opacity: 0; }
           }
         `}</style>
-        <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #ffffff, #f8fcff)" }}>
+        <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #1b2430, #141c26)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.2 }}>Dungeon Phone Console</div>
           </div>
@@ -251,14 +257,14 @@ export default function App() {
                 });
               }}
               aria-label="Open settings"
-              style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff", cursor: "pointer", display: "grid", placeItems: "center" }}
+              style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, cursor: "pointer", display: "grid", placeItems: "center" }}
             >
               <Icon path="M6 12h.01 M12 12h.01 M18 12h.01" size={18} stroke={theme.sub} strokeWidth={3} />
             </button>
           </div>
 
           {settingsOpen ? (
-            <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", top: 54, width: "min(400px, 80vw)", background: "#fff", border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: theme.shadow, padding: 12, zIndex: 10 }}>
+            <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", top: 54, width: "min(400px, 80vw)", background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: theme.shadow, padding: 12, zIndex: 10 }}>
               <div style={{ ...mono, fontSize: 12, padding: "6px 10px", borderRadius: 999, background: statusTone.bg, color: statusTone.color, display: "inline-block", marginBottom: 8 }}>
                 {status}
               </div>
@@ -266,7 +272,7 @@ export default function App() {
                 <input
                   value={wsUrl}
                   onChange={(e) => setWsUrl(e.target.value)}
-                  style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, fontSize: 14 }}
+                  style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, fontSize: 14, background: theme.surfaceAlt, color: theme.text }}
                 />
                 <button
                   onClick={reconnect}
@@ -279,7 +285,7 @@ export default function App() {
                 onClick={() => {
                   setSettingsOpen(false);
                 }}
-                style={{ marginTop: 10, width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff", color: theme.sub, fontWeight: 600, cursor: "pointer" }}
+                style={{ marginTop: 10, width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text, fontWeight: 600, cursor: "pointer" }}
               >
                 Close Menu
               </button>
@@ -299,7 +305,7 @@ export default function App() {
                 placeholder="Your name"
                 value={playerName}
                 onChange={(e) => setPlayerName(e.target.value)}
-                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}` }}
+                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text }}
               />
               <input
                 type="number"
@@ -307,12 +313,12 @@ export default function App() {
                 max="6"
                 value={seat}
                 onChange={(e) => setSeat(e.target.value)}
-                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}` }}
+                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text }}
               />
             </div>
             <button
               onClick={doJoin}
-              style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "none", background: theme.brandDark, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+              style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "none", background: theme.brand, color: "#081316", fontWeight: 800, cursor: "pointer" }}
             >
               Enter Dungeon
             </button>
@@ -323,7 +329,7 @@ export default function App() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <div style={{ fontWeight: 800, fontSize: 18 }}>{player?.playerName || "Player"}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ padding: "6px 10px", borderRadius: 999, fontWeight: 700, fontSize: 12, background: active ? "#e9f7ef" : "#eef5fb", color: active ? theme.success : "#365772" }}>
+                  <div style={{ padding: "6px 10px", borderRadius: 999, fontWeight: 700, fontSize: 12, background: active ? "rgba(76, 214, 138, 0.18)" : "rgba(157, 176, 195, 0.16)", color: active ? theme.success : theme.sub }}>
                     {active ? "YOUR TURN" : "WAITING"}
                   </div>
                   <button
@@ -333,8 +339,8 @@ export default function App() {
                       padding: "8px 12px",
                       borderRadius: 10,
                       border: "none",
-                      background: !active || !allowed.has(ActionType.END_TURN) ? "#dbe4ee" : "#ffb347",
-                      color: !active || !allowed.has(ActionType.END_TURN) ? "#7e8c98" : "#3d2a11",
+                      background: !active || !allowed.has(ActionType.END_TURN) ? "#2a3541" : "#d08a2f",
+                      color: !active || !allowed.has(ActionType.END_TURN) ? "#9aa8b6" : "#221507",
                       fontWeight: 800,
                       cursor: !active || !allowed.has(ActionType.END_TURN) ? "not-allowed" : "pointer"
                     }}
@@ -375,9 +381,9 @@ export default function App() {
                   </div>
 
                   <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
-                    <div style={{ position: "absolute", left: 95, top: 80, width: MINI_HEX_W, height: MINI_HEX_H, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1e4970" }}>
+                    <div style={{ position: "absolute", left: 95, top: 80, width: MINI_HEX_W, height: MINI_HEX_H, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#cfe3f7" }}>
                       <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
-                        <polygon points={MINI_HEX_POINTS} fill="#f2f7fd" stroke="#9ab3ca" strokeWidth="1.2" />
+                        <polygon points={MINI_HEX_POINTS} fill="#1a2430" stroke="#3a4b5e" strokeWidth="1.2" />
                       </svg>
                       <div style={{ position: "relative" }}>YOU</div>
                     </div>
@@ -401,16 +407,16 @@ export default function App() {
                         const showDamageFx = Boolean(hasEnemy && damageFx);
 
                         const bg = !c.inBounds
-                          ? "#f5f7f9"
+                          ? "#141a20"
                           : hasEnemy
-                            ? "#fde7e7"
+                            ? "#3a1b1f"
                             : otherHero
-                              ? "#eef1f5"
+                              ? "#1b222c"
                               : c.canMove
-                                ? "#e7f6eb"
-                                : "#fff";
+                                ? "#173023"
+                                : "#1a222c";
 
-                        const stroke = hasEnemy ? "#e16e6e" : c.canMove ? "#6bb785" : "#bcc8d6";
+                        const stroke = hasEnemy ? "#b85b5b" : c.canMove ? "#4da06a" : "#435465";
                         const label = !c.inBounds ? "" : hasEnemy ? "EN" : otherHero ? "AL" : c.canMove ? "GO" : "";
 
                         return (
@@ -433,7 +439,7 @@ export default function App() {
                               fontWeight: 800,
                               fontSize: 12,
                               letterSpacing: 0.6,
-                              color: hasEnemy ? theme.danger : c.canMove ? theme.success : "#5f6d7a",
+                              color: hasEnemy ? theme.danger : c.canMove ? theme.success : theme.sub,
                               opacity: !c.inBounds ? 0.25 : (hasEnemy || otherHero || c.canMove) ? 1 : 0.45,
                               cursor: canTap ? "pointer" : "default",
                               transformOrigin: "50% 50%",
@@ -450,9 +456,9 @@ export default function App() {
                                   position: "absolute",
                                   left: "50%",
                                   top: -4,
-                                  background: "rgba(255, 246, 235, 0.98)",
+                                  background: "rgba(18, 24, 32, 0.95)",
                                   color: theme.danger,
-                                  border: "1px solid rgba(210, 69, 69, 0.35)",
+                                  border: "1px solid rgba(255, 107, 107, 0.4)",
                                   borderRadius: 999,
                                   padding: "2px 8px",
                                   fontSize: 11,
@@ -482,7 +488,7 @@ export default function App() {
         )}
 
         {error ? (
-          <div style={{ ...cardStyle, borderColor: "#f3b3b3", background: "#fff4f4", color: "#8d1f1f", whiteSpace: "pre-wrap" }}>
+          <div style={{ ...cardStyle, borderColor: "#5b2a2a", background: "#2a1416", color: "#f0a0a0", whiteSpace: "pre-wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontWeight: 700 }}>
               <Icon path="M12 9v4 M12 17h.01 M4.93 19h14.14a2 2 0 0 0 1.74-3L13.74 4a2 2 0 0 0-3.48 0L3.19 16a2 2 0 0 0 1.74 3z" stroke={theme.danger} />
               Error

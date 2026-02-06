@@ -16,10 +16,10 @@ const mono = {
 };
 
 const panelStyle = {
-  background: "rgba(255, 255, 255, 0.84)",
-  border: "1px solid rgba(18, 36, 58, 0.12)",
+  background: "rgba(16, 23, 32, 0.9)",
+  border: "1px solid rgba(148, 166, 186, 0.18)",
   borderRadius: 18,
-  boxShadow: "0 18px 40px rgba(9, 28, 48, 0.14)",
+  boxShadow: "0 18px 40px rgba(0, 0, 0, 0.45)",
   backdropFilter: "blur(10px)",
   padding: 14
 };
@@ -319,12 +319,13 @@ function DungeonTableView({ onBackToMenu }) {
     <div className="ttd-root">
       <style>{`
         :root {
-          --ttd-ink: #102739;
-          --ttd-sub: #5d7082;
-          --ttd-brand: #0f8f93;
-          --ttd-brand-2: #2a6bb2;
-          --ttd-danger: #cb3c3c;
-          --ttd-card: rgba(255, 255, 255, 0.84);
+          --ttd-ink: #e6edf4;
+          --ttd-sub: #9db0c3;
+          --ttd-brand: #20bfb7;
+          --ttd-brand-2: #4a86d6;
+          --ttd-danger: #ff6b6b;
+          --ttd-card: rgba(16, 23, 32, 0.9);
+          --ttd-border: rgba(148, 166, 186, 0.18);
         }
         html, body, #root {
           margin: 0;
@@ -332,16 +333,16 @@ function DungeonTableView({ onBackToMenu }) {
           min-height: 100%;
         }
         body {
-          background: #eef5fb;
+          background: #0d131a;
         }
         .ttd-root {
           min-height: 100dvh;
           width: 100%;
           color: var(--ttd-ink);
           background:
-            radial-gradient(circle at 0% 0%, rgba(18, 178, 176, 0.22), transparent 42%),
-            radial-gradient(circle at 100% 0%, rgba(46, 113, 188, 0.22), transparent 45%),
-            linear-gradient(160deg, #f6fcff 0%, #eef5fb 45%, #eef6f4 100%);
+            radial-gradient(circle at 0% 0%, rgba(32, 191, 183, 0.16), transparent 42%),
+            radial-gradient(circle at 100% 0%, rgba(74, 134, 214, 0.18), transparent 45%),
+            linear-gradient(160deg, #0d131a 0%, #121a22 50%, #101821 100%);
           font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
           padding: 16px;
           box-sizing: border-box;
@@ -357,10 +358,10 @@ function DungeonTableView({ onBackToMenu }) {
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          background: linear-gradient(130deg, rgba(255,255,255,0.9), rgba(255,255,255,0.72));
-          border: 1px solid rgba(18, 36, 58, 0.12);
+          background: linear-gradient(130deg, rgba(28, 37, 48, 0.95), rgba(16, 23, 32, 0.9));
+          border: 1px solid var(--ttd-border);
           border-radius: 18px;
-          box-shadow: 0 12px 36px rgba(7, 24, 44, 0.13);
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
           padding: 12px 14px;
         }
         .ttd-title {
@@ -381,8 +382,8 @@ function DungeonTableView({ onBackToMenu }) {
           align-items: center;
           gap: 8px;
           border-radius: 999px;
-          border: 1px solid rgba(18, 36, 58, 0.12);
-          background: rgba(255,255,255,0.75);
+          border: 1px solid var(--ttd-border);
+          background: rgba(18, 26, 36, 0.8);
           padding: 6px 10px;
           font-weight: 700;
           font-size: 0.84rem;
@@ -393,7 +394,7 @@ function DungeonTableView({ onBackToMenu }) {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          box-shadow: 0 0 0 4px rgba(0,0,0,0.06);
+          box-shadow: 0 0 0 4px rgba(0,0,0,0.28);
         }
         .ttd-layout {
           display: grid;
@@ -420,8 +421,8 @@ function DungeonTableView({ onBackToMenu }) {
           flex-wrap: wrap;
         }
         .ttd-btn {
-          border: 1px solid rgba(18, 36, 58, 0.16);
-          background: #ffffff;
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: #1a2430;
           color: var(--ttd-ink);
           border-radius: 10px;
           font-weight: 700;
@@ -434,16 +435,16 @@ function DungeonTableView({ onBackToMenu }) {
           border: none;
         }
         .ttd-btn.warn {
-          color: #8d1f1f;
-          border-color: rgba(203, 60, 60, 0.32);
-          background: #fff3f3;
+          color: #ff9a9a;
+          border-color: rgba(255, 107, 107, 0.4);
+          background: rgba(255, 107, 107, 0.14);
           padding: 3px 8px;
           border-radius: 8px;
         }
         .ttd-btn.danger {
           color: #ffffff;
-          border-color: rgba(162, 25, 25, 0.2);
-          background: linear-gradient(135deg, #d24545, #b32929);
+          border-color: rgba(255, 107, 107, 0.35);
+          background: linear-gradient(135deg, #ff6b6b, #c94545);
         }
         .ttd-pill {
           display: inline-flex;
@@ -451,8 +452,8 @@ function DungeonTableView({ onBackToMenu }) {
           gap: 6px;
           border-radius: 999px;
           padding: 4px 9px;
-          border: 1px solid rgba(18, 36, 58, 0.14);
-          background: rgba(255,255,255,0.7);
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.75);
           font-size: 0.78rem;
           font-weight: 700;
           color: var(--ttd-sub);
@@ -466,14 +467,14 @@ function DungeonTableView({ onBackToMenu }) {
           gap: 8px;
         }
         .ttd-player {
-          border: 1px solid rgba(18, 36, 58, 0.1);
+          border: 1px solid rgba(148, 166, 186, 0.18);
           border-radius: 12px;
           padding: 8px 10px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 8px;
-          background: rgba(255, 255, 255, 0.65);
+          background: rgba(18, 26, 36, 0.7);
         }
         .ttd-seat {
           color: var(--ttd-sub);
@@ -494,10 +495,10 @@ function DungeonTableView({ onBackToMenu }) {
           gap: 8px;
         }
         .ttd-stat {
-          border: 1px solid rgba(18, 36, 58, 0.11);
+          border: 1px solid rgba(148, 166, 186, 0.18);
           border-radius: 12px;
           padding: 8px 10px;
-          background: rgba(255,255,255,0.68);
+          background: rgba(18, 26, 36, 0.8);
         }
         .ttd-stat label {
           display: block;
@@ -519,7 +520,7 @@ function DungeonTableView({ onBackToMenu }) {
         }
         .ttd-log li {
           margin-bottom: 6px;
-          color: #27445f;
+          color: var(--ttd-sub);
         }
         .ttd-board-shell {
           display: flex;
@@ -538,14 +539,14 @@ function DungeonTableView({ onBackToMenu }) {
           min-height: 68vh;
           overflow: auto;
           border-radius: 12px;
-          border: 1px solid rgba(18, 36, 58, 0.11);
-          background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(239,246,250,0.88));
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          background: linear-gradient(180deg, rgba(15, 22, 30, 0.95), rgba(19, 28, 38, 0.95));
           padding: 12px;
         }
         .ttd-error {
-          border: 1px solid rgba(213, 61, 61, 0.35);
-          background: rgba(255, 240, 240, 0.9);
-          color: #922525;
+          border: 1px solid rgba(255, 107, 107, 0.4);
+          background: rgba(42, 20, 22, 0.92);
+          color: #ffb5b5;
           border-radius: 12px;
           padding: 10px 12px;
           font-weight: 600;
@@ -563,9 +564,9 @@ function DungeonTableView({ onBackToMenu }) {
         .ttd-modal {
           width: min(420px, 96vw);
           border-radius: 18px;
-          border: 1px solid rgba(18, 36, 58, 0.18);
-          background: #ffffff;
-          box-shadow: 0 22px 60px rgba(6, 20, 38, 0.36);
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: #141c26;
+          box-shadow: 0 22px 60px rgba(0, 0, 0, 0.5);
           padding: 14px;
         }
         .ttd-modal-head {
@@ -580,18 +581,18 @@ function DungeonTableView({ onBackToMenu }) {
           font-size: 1.1rem;
         }
         .ttd-qr-wrap {
-          border: 1px solid rgba(18, 36, 58, 0.12);
+          border: 1px solid rgba(148, 166, 186, 0.18);
           border-radius: 14px;
           padding: 14px;
           display: grid;
           place-items: center;
           margin-bottom: 12px;
-          background: #fbfdff;
+          background: #111821;
         }
         .ttd-enemy-art {
-          border: 1px solid rgba(18, 36, 58, 0.14);
+          border: 1px solid rgba(148, 166, 186, 0.18);
           border-radius: 14px;
-          background: linear-gradient(140deg, rgba(222, 241, 255, 0.8), rgba(255, 231, 231, 0.8));
+          background: linear-gradient(140deg, rgba(24, 36, 48, 0.9), rgba(42, 24, 28, 0.9));
           display: grid;
           place-items: center;
           font-size: 72px;
@@ -689,7 +690,7 @@ function DungeonTableView({ onBackToMenu }) {
                   ))}
                 </ul>
               ) : (
-                <p style={{ margin: 0, color: "#5d7082" }}>Waiting for players...</p>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for players...</p>
               )}
             </section>
 
@@ -710,7 +711,7 @@ function DungeonTableView({ onBackToMenu }) {
                   </div>
                 </div>
               ) : (
-                <p style={{ margin: 0, color: "#5d7082" }}>No encounter yet.</p>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No encounter yet.</p>
               )}
             </section>
 
@@ -729,7 +730,7 @@ function DungeonTableView({ onBackToMenu }) {
                     ))}
                 </ul>
               ) : (
-                <p style={{ margin: 0, color: "#5d7082" }}>No events yet.</p>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No events yet.</p>
               )}
             </section>
           </div>
@@ -737,8 +738,8 @@ function DungeonTableView({ onBackToMenu }) {
           <section
             style={{
               ...panelStyle,
-              border: "1px solid rgba(15, 143, 147, 0.24)",
-              boxShadow: "0 22px 48px rgba(7, 31, 54, 0.16)"
+              border: "1px solid rgba(32, 191, 183, 0.3)",
+              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)"
             }}
             className="ttd-board-shell"
           >
@@ -773,12 +774,12 @@ function DungeonTableView({ onBackToMenu }) {
                     const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
 
                     const bg = isEnemy
-                      ? "rgba(245, 72, 72, 0.18)"
+                      ? "rgba(255, 107, 107, 0.2)"
                       : isActiveCell
-                        ? "rgba(18, 158, 117, 0.19)"
-                        : "rgba(255, 255, 255, 0.9)";
+                        ? "rgba(76, 214, 138, 0.18)"
+                        : "rgba(18, 26, 36, 0.85)";
 
-                    const stroke = isActiveCell ? "rgba(7, 48, 33, 0.6)" : "rgba(18, 36, 58, 0.2)";
+                    const stroke = isActiveCell ? "rgba(19, 92, 68, 0.7)" : "rgba(148, 166, 186, 0.2)";
                     const strokeWidth = isActiveCell ? 2 : 1;
 
                     return (
@@ -801,7 +802,7 @@ function DungeonTableView({ onBackToMenu }) {
                           userSelect: "none",
                           fontSize: 12,
                           padding: 6,
-                          color: "#123355",
+                          color: "var(--ttd-ink)",
                           fontWeight: 800,
                           cursor: isEnemy ? "pointer" : "default"
                         }}
@@ -823,7 +824,7 @@ function DungeonTableView({ onBackToMenu }) {
                             <polygon
                               points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
                               fill="none"
-                              stroke="rgba(15, 143, 147, 0.44)"
+                              stroke="rgba(32, 191, 183, 0.6)"
                               strokeWidth="3"
                             />
                           ) : null}
@@ -831,7 +832,7 @@ function DungeonTableView({ onBackToMenu }) {
                             <polygon
                               points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
                               fill="none"
-                              stroke="rgba(203, 60, 60, 0.88)"
+                              stroke="rgba(255, 107, 107, 0.9)"
                               strokeWidth="4"
                               style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.65s ease-out forwards" }}
                             />
@@ -847,9 +848,9 @@ function DungeonTableView({ onBackToMenu }) {
                               top: -8,
                               padding: "2px 8px",
                               borderRadius: 999,
-                              background: "rgba(255,255,255,0.95)",
-                              border: "1px solid rgba(210, 30, 30, 0.25)",
-                              color: "#c21f1f",
+                              background: "rgba(18, 24, 32, 0.95)",
+                              border: "1px solid rgba(255, 107, 107, 0.45)",
+                              color: "#ff8b8b",
                               fontWeight: 800,
                               animation: "tvHitFloat 0.9s ease-out forwards"
                             }}
@@ -881,13 +882,13 @@ function DungeonTableView({ onBackToMenu }) {
                   </div>
                   <div className="ttd-stat">
                     <label>Attack Power</label>
-                    <strong style={{ ...mono, color: "#c33939" }}>{viewedEnemy.attackPower}</strong>
+                    <strong style={{ ...mono, color: "#ff8b8b" }}>{viewedEnemy.attackPower}</strong>
                   </div>
                 </div>
-                <p style={{ margin: 0, color: "#425a70" }}>{viewedEnemy.flavor}</p>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>{viewedEnemy.flavor}</p>
               </>
             ) : (
-              <p style={{ margin: 0, color: "#5d7082" }}>Enemy details unavailable.</p>
+              <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Enemy details unavailable.</p>
             )}
           </div>
         </div>
@@ -899,7 +900,7 @@ function DungeonTableView({ onBackToMenu }) {
             <div className="ttd-modal-head">
               <h3>Kick Player?</h3>
             </div>
-            <p style={{ marginTop: 0, marginBottom: 14, color: "#425a70" }}>
+            <p style={{ marginTop: 0, marginBottom: 14, color: "var(--ttd-sub)" }}>
               Remove <strong>{kickPrompt.playerName}</strong> from this session?
             </p>
             <div className="ttd-action-row" style={{ justifyContent: "flex-end" }}>
@@ -923,7 +924,7 @@ function DungeonTableView({ onBackToMenu }) {
               </div>
             ) : (
               <div className="ttd-qr-wrap">
-                <p style={{ margin: 0, color: "#5d7082" }}>Waiting for session QR...</p>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for session QR...</p>
               </div>
             )}
 
@@ -1805,11 +1806,11 @@ function CatanTableView({ onBackToMenu }) {
     <div className="ttc-root">
       <style>{`
         :root {
-          --ttc-ink: #12283c;
-          --ttc-sub: #587288;
-          --ttc-border: rgba(16, 35, 52, 0.14);
-          --ttc-sea-1: #cbe7f5;
-          --ttc-sea-2: #dff2ff;
+          --ttc-ink: #e6edf4;
+          --ttc-sub: #9db0c3;
+          --ttc-border: rgba(148, 166, 186, 0.2);
+          --ttc-sea-1: #1b2a36;
+          --ttc-sea-2: #15202a;
         }
         html, body, #root {
           margin: 0;
@@ -1817,7 +1818,7 @@ function CatanTableView({ onBackToMenu }) {
           min-height: 100%;
         }
         body {
-          background: linear-gradient(160deg, #edf8ff 0%, #dbeefc 56%, #e7f4f5 100%);
+          background: linear-gradient(160deg, #0d131a 0%, #121a22 56%, #0f1821 100%);
         }
         .ttc-root {
           min-height: 100dvh;
@@ -1826,9 +1827,9 @@ function CatanTableView({ onBackToMenu }) {
           color: var(--ttc-ink);
           font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
           background:
-            radial-gradient(circle at 10% 0%, rgba(40, 151, 184, 0.2), transparent 36%),
-            radial-gradient(circle at 90% 0%, rgba(64, 180, 130, 0.17), transparent 40%),
-            linear-gradient(160deg, #f7fcff 0%, #ebf4fb 54%, #edf7f4 100%);
+            radial-gradient(circle at 10% 0%, rgba(32, 191, 183, 0.16), transparent 36%),
+            radial-gradient(circle at 90% 0%, rgba(74, 134, 214, 0.18), transparent 40%),
+            linear-gradient(160deg, #0d131a 0%, #121b24 54%, #0f1821 100%);
         }
         .ttc-shell {
           width: 100%;
@@ -1839,8 +1840,8 @@ function CatanTableView({ onBackToMenu }) {
         .ttc-header {
           border: 1px solid var(--ttc-border);
           border-radius: 18px;
-          background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.74));
-          box-shadow: 0 16px 38px rgba(7, 28, 46, 0.12);
+          background: linear-gradient(135deg, rgba(28, 37, 48, 0.95), rgba(16, 23, 32, 0.92));
+          box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45);
           padding: 12px 14px;
           display: flex;
           align-items: center;
@@ -1866,8 +1867,8 @@ function CatanTableView({ onBackToMenu }) {
           flex-wrap: wrap;
         }
         .ttc-btn {
-          border: 1px solid rgba(18, 36, 58, 0.16);
-          background: #ffffff;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: #1a2430;
           color: var(--ttc-ink);
           border-radius: 10px;
           font-weight: 700;
@@ -1880,22 +1881,22 @@ function CatanTableView({ onBackToMenu }) {
         }
         .ttc-pill {
           border-radius: 999px;
-          border: 1px solid rgba(18, 36, 58, 0.14);
-          background: rgba(255,255,255,0.8);
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.8);
           padding: 4px 10px;
           font-size: 0.8rem;
           font-weight: 700;
-          color: #426178;
+          color: var(--ttc-sub);
         }
         .ttc-pill.roll {
-          border-color: rgba(14, 126, 99, 0.32);
-          background: rgba(220, 249, 238, 0.88);
-          color: #0e6f56;
+          border-color: rgba(76, 214, 138, 0.4);
+          background: rgba(76, 214, 138, 0.18);
+          color: #7fe3b0;
         }
         .ttc-select {
-          border: 1px solid rgba(18, 36, 58, 0.18);
-          background: #ffffff;
-          color: #12314a;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: #1a2430;
+          color: var(--ttc-ink);
           border-radius: 10px;
           font-weight: 700;
           padding: 8px 34px 8px 10px;
@@ -1904,7 +1905,7 @@ function CatanTableView({ onBackToMenu }) {
         }
         .ttc-inline-error {
           margin-top: 8px;
-          color: #892727;
+          color: #ff9a9a;
           font-size: 0.84rem;
           font-weight: 700;
         }
@@ -1916,12 +1917,12 @@ function CatanTableView({ onBackToMenu }) {
         }
         .ttc-die-chip {
           border-radius: 999px;
-          border: 1px solid rgba(18, 36, 58, 0.14);
-          background: rgba(255,255,255,0.82);
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.82);
           padding: 3px 9px;
           font-size: 0.75rem;
           font-weight: 700;
-          color: #32516a;
+          color: var(--ttc-ink);
           display: inline-flex;
           align-items: center;
           gap: 6px;
@@ -1933,23 +1934,23 @@ function CatanTableView({ onBackToMenu }) {
           white-space: nowrap;
         }
         .ttc-die-label {
-          border: 1px solid rgba(18, 36, 58, 0.16);
+          border: 1px solid rgba(148, 166, 186, 0.22);
           border-radius: 999px;
           padding: 2px 8px;
           font-size: 0.7rem;
           font-weight: 700;
-          color: #2b4a63;
-          background: rgba(255,255,255,0.95);
+          color: var(--ttc-ink);
+          background: rgba(20, 28, 38, 0.95);
           min-width: 90px;
         }
         .ttc-die-chip.calibrated {
-          border-color: rgba(18, 126, 83, 0.34);
-          background: rgba(227, 250, 241, 0.92);
+          border-color: rgba(76, 214, 138, 0.4);
+          background: rgba(76, 214, 138, 0.18);
         }
         .ttc-chip-btn {
-          border: 1px solid rgba(18, 36, 58, 0.16);
-          background: #ffffff;
-          color: #2b4a63;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: #1a2430;
+          color: var(--ttc-ink);
           border-radius: 999px;
           padding: 2px 8px;
           font-size: 0.7rem;
@@ -1958,8 +1959,8 @@ function CatanTableView({ onBackToMenu }) {
         }
         .ttc-calibration-card {
           margin-top: 8px;
-          border: 1px solid rgba(18, 118, 155, 0.24);
-          background: rgba(231, 248, 255, 0.88);
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: rgba(18, 26, 36, 0.88);
           border-radius: 12px;
           padding: 8px 10px;
           display: flex;
@@ -1969,15 +1970,15 @@ function CatanTableView({ onBackToMenu }) {
           flex-wrap: wrap;
         }
         .ttc-calibration-copy {
-          color: #235169;
+          color: var(--ttc-sub);
           font-size: 0.82rem;
           font-weight: 700;
         }
         .ttc-board-wrap {
           border: 1px solid var(--ttc-border);
           border-radius: 20px;
-          background: linear-gradient(180deg, rgba(235, 247, 253, 0.9), rgba(205, 231, 245, 0.88));
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 20px 44px rgba(9, 32, 52, 0.16);
+          background: linear-gradient(180deg, rgba(16, 23, 32, 0.92), rgba(20, 30, 40, 0.92));
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 20px 44px rgba(0, 0, 0, 0.4);
           user-select: none;
           padding: clamp(10px, 2.4vw, 18px);
           position: relative;
@@ -2038,9 +2039,9 @@ function CatanTableView({ onBackToMenu }) {
           width: clamp(42px, 5.3vw, 68px);
           height: clamp(42px, 5.3vw, 68px);
           border-radius: 50%;
-          background: rgba(246, 239, 217, 0.74);
-          border: 2px solid rgba(92, 78, 47, 0.26);
-          box-shadow: 0 3px 7px rgba(53, 43, 20, 0.25);
+          background: rgba(232, 224, 198, 0.82);
+          border: 2px solid rgba(120, 101, 62, 0.4);
+          box-shadow: 0 3px 7px rgba(0, 0, 0, 0.35);
           display: grid;
           place-items: center;
           font-weight: 900;
@@ -2064,7 +2065,7 @@ function CatanTableView({ onBackToMenu }) {
           font-weight: 900;
           letter-spacing: 0.7px;
           text-transform: uppercase;
-          color: rgba(46, 41, 26, 0.74);
+          color: rgba(231, 220, 196, 0.82);
         }
         .ttc-track {
           border: none;
@@ -2084,12 +2085,12 @@ function CatanTableView({ onBackToMenu }) {
           margin-top: 0;
           min-height: 360px;
           border-radius: 22px;
-          border: 1px solid rgba(26, 93, 126, 0.35);
+          border: 1px solid rgba(82, 128, 156, 0.45);
           background:
-            radial-gradient(circle at 18% 10%, rgba(255,255,255,0.35), rgba(255,255,255,0) 45%),
-            repeating-linear-gradient(-14deg, rgba(255,255,255,0.1) 0 8px, rgba(255,255,255,0) 8px 20px),
-            linear-gradient(165deg, #42a3cf 0%, #2184b2 45%, #1c6f98 100%);
-          box-shadow: inset 0 2px 0 rgba(255,255,255,0.35), inset 0 -8px 16px rgba(15, 53, 75, 0.24);
+            radial-gradient(circle at 18% 10%, rgba(255,255,255,0.08), rgba(255,255,255,0) 45%),
+            repeating-linear-gradient(-14deg, rgba(255,255,255,0.06) 0 8px, rgba(255,255,255,0) 8px 20px),
+            linear-gradient(165deg, #1f4e67 0%, #1b3f56 45%, #162f42 100%);
+          box-shadow: inset 0 2px 0 rgba(255,255,255,0.12), inset 0 -8px 16px rgba(0, 0, 0, 0.35);
         }
         .ttc-track-node {
           position: absolute;
@@ -2097,27 +2098,27 @@ function CatanTableView({ onBackToMenu }) {
           height: 72px;
           transform: translate(-50%, -50%);
           border-radius: 50%;
-          border: 3px solid rgba(216, 238, 248, 0.88);
-          background: rgba(255, 255, 255, 0.2);
+          border: 3px solid rgba(176, 214, 230, 0.6);
+          background: rgba(13, 24, 32, 0.68);
           display: grid;
           place-items: center;
           backdrop-filter: blur(2px);
-          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.2);
-          color: rgba(17, 53, 75, 0.9);
+          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.35);
+          color: rgba(226, 238, 248, 0.9);
           z-index: 2;
         }
         .ttc-track-node.done {
-          background: rgba(255, 255, 255, 0.36);
-          border-color: rgba(228, 245, 252, 0.95);
+          background: rgba(32, 58, 72, 0.7);
+          border-color: rgba(204, 235, 246, 0.7);
         }
         .ttc-track-node.active {
-          border-color: rgba(228, 245, 252, 0.95);
-          background: rgba(255, 255, 255, 0.36);
-          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.2);
+          border-color: rgba(204, 235, 246, 0.85);
+          background: rgba(38, 72, 92, 0.7);
+          box-shadow: inset 0 0 0 1px rgba(12, 69, 95, 0.35);
         }
         .ttc-track-node.attack {
-          border-color: rgba(255, 230, 203, 0.95);
-          background: radial-gradient(circle at 32% 22%, rgba(255, 185, 132, 0.62), rgba(255,255,255,0.3) 68%);
+          border-color: rgba(255, 200, 160, 0.85);
+          background: radial-gradient(circle at 32% 22%, rgba(255, 140, 88, 0.52), rgba(30, 20, 16, 0.65) 68%);
         }
         .ttc-track-icon {
           font-size: 1.65rem;
@@ -2306,12 +2307,12 @@ function GameMenu({ onOpenGame }) {
     <div className="ttg-root">
       <style>{`
         :root {
-          --ttg-ink: #10263a;
-          --ttg-sub: #597188;
-          --ttg-border: rgba(20, 38, 60, 0.14);
-          --ttg-card-bg: rgba(255, 255, 255, 0.8);
-          --ttg-accent: #146f8f;
-          --ttg-accent-2: #27a378;
+          --ttg-ink: #e6edf4;
+          --ttg-sub: #9db0c3;
+          --ttg-border: rgba(148, 166, 186, 0.2);
+          --ttg-card-bg: rgba(18, 26, 36, 0.9);
+          --ttg-accent: #20bfb7;
+          --ttg-accent-2: #4a86d6;
         }
         html, body, #root {
           margin: 0;
@@ -2320,9 +2321,9 @@ function GameMenu({ onOpenGame }) {
         }
         body {
           background:
-            radial-gradient(circle at 0% 0%, rgba(30, 130, 170, 0.18), transparent 40%),
-            radial-gradient(circle at 100% 0%, rgba(42, 173, 117, 0.16), transparent 42%),
-            linear-gradient(160deg, #f7fcff 0%, #eef4fa 46%, #eff7f3 100%);
+            radial-gradient(circle at 0% 0%, rgba(32, 191, 183, 0.16), transparent 40%),
+            radial-gradient(circle at 100% 0%, rgba(74, 134, 214, 0.18), transparent 42%),
+            linear-gradient(160deg, #0d131a 0%, #121a22 46%, #0f1821 100%);
         }
         .ttg-root {
           min-height: 100dvh;
@@ -2341,8 +2342,8 @@ function GameMenu({ onOpenGame }) {
         .ttg-head {
           border: 1px solid var(--ttg-border);
           border-radius: 22px;
-          background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
-          box-shadow: 0 24px 60px rgba(10, 34, 54, 0.14);
+          background: linear-gradient(145deg, rgba(28, 37, 48, 0.96), rgba(16, 23, 32, 0.92));
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
           padding: clamp(14px, 2.8vw, 24px);
         }
         .ttg-head h1 {
@@ -2365,9 +2366,9 @@ function GameMenu({ onOpenGame }) {
           border: 1px solid var(--ttg-border);
           border-radius: 18px;
           background:
-            linear-gradient(145deg, rgba(255, 255, 255, 0.95), var(--ttg-card-bg)),
-            repeating-linear-gradient(-45deg, rgba(255,255,255,0.1) 0 10px, rgba(255,255,255,0) 10px 20px);
-          box-shadow: 0 16px 34px rgba(10, 34, 54, 0.12);
+            linear-gradient(145deg, rgba(24, 34, 44, 0.96), var(--ttg-card-bg)),
+            repeating-linear-gradient(-45deg, rgba(255,255,255,0.04) 0 10px, rgba(255,255,255,0) 10px 20px);
+          box-shadow: 0 16px 34px rgba(0, 0, 0, 0.45);
           padding: 14px;
           display: flex;
           flex-direction: column;
@@ -2387,7 +2388,7 @@ function GameMenu({ onOpenGame }) {
         }
         .ttg-desc {
           margin: 0;
-          color: #38506a;
+          color: var(--ttg-sub);
         }
         .ttg-tags {
           display: flex;
@@ -2396,12 +2397,12 @@ function GameMenu({ onOpenGame }) {
         }
         .ttg-tag {
           border-radius: 999px;
-          border: 1px solid rgba(18, 36, 58, 0.14);
-          background: rgba(255, 255, 255, 0.84);
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.84);
           padding: 4px 10px;
           font-size: 0.78rem;
           font-weight: 700;
-          color: #36516b;
+          color: var(--ttg-sub);
         }
         .ttg-open {
           border: none;
@@ -2414,7 +2415,7 @@ function GameMenu({ onOpenGame }) {
         }
         .ttg-open:disabled {
           cursor: not-allowed;
-          background: linear-gradient(135deg, #a2adbb, #7f8a99);
+          background: linear-gradient(135deg, #2f3b4a, #222b38);
         }
       `}</style>
 
