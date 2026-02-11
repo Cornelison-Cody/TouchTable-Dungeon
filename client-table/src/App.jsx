@@ -71,10 +71,14 @@ function DungeonTableView({ onBackToMenu }) {
   const [qrOpen, setQrOpen] = useState(false);
   const [kickPrompt, setKickPrompt] = useState(null);
   const [enemyInspectOpen, setEnemyInspectOpen] = useState(false);
+  const [cameraPx, setCameraPx] = useState({ x: 0, y: 0 });
+  const [boardViewport, setBoardViewport] = useState({ width: 0, height: 0 });
 
   const wsRef = useRef(null);
   const prevEnemyHpRef = useRef(null);
   const audioCtxRef = useRef(null);
+  const boardScrollRef = useRef(null);
+  const cameraCenteredRef = useRef(false);
 
   useEffect(() => {
     setError(null);
@@ -221,7 +225,6 @@ function DungeonTableView({ onBackToMenu }) {
 
   const joinUrl = sessionInfo?.joinUrl || "";
   const game = publicState?.game || null;
-  const grid = game?.grid || { w: 10, h: 7 };
   const heroes = game?.heroes || [];
   const enemy = game?.enemy || null;
   const log = game?.log || [];
@@ -279,15 +282,57 @@ function DungeonTableView({ onBackToMenu }) {
 
   const moveOptions = new Set();
   if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
-    const inBounds = (x, y) => x >= 0 && y >= 0 && x < grid.w && y < grid.h;
+    const inBounds = () => true;
     const isBlocked = (x, y) => occupied.has(`${x},${y}`);
     const opts = hexWithinRange({ x: activeHero.x, y: activeHero.y }, moveRange, inBounds, isBlocked);
     for (const k of opts) moveOptions.add(k);
   }
 
-  const HEX_SIZE = 42;
+  const HEX_SIZE = 34;
   const HEX_W = HEX_SIZE * 2;
   const HEX_H = Math.sqrt(3) * HEX_SIZE;
+  const HEX_STEP_X = HEX_SIZE * 1.5;
+  const VIEW_PAD = 3;
+
+  useEffect(() => {
+    const updateViewport = () => {
+      const board = boardScrollRef.current;
+      if (!board) return;
+      setBoardViewport({ width: board.clientWidth, height: board.clientHeight });
+    };
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    if (cameraCenteredRef.current) return;
+    const focus = activeHero || heroes[0] || enemy;
+    if (!focus) return;
+
+    cameraCenteredRef.current = true;
+    setCameraPx({
+      x: focus.x * HEX_STEP_X,
+      y: focus.y * HEX_H + (focus.x % 2 !== 0 ? HEX_H / 2 : 0)
+    });
+  }, [activeHero, heroes, enemy, HEX_H, HEX_STEP_X]);
+
+  const viewportW = boardViewport.width || 1;
+  const viewportH = boardViewport.height || 1;
+  const worldLeft = cameraPx.x - viewportW / 2;
+  const worldTop = cameraPx.y - viewportH / 2;
+  const worldRight = cameraPx.x + viewportW / 2;
+  const worldBottom = cameraPx.y + viewportH / 2;
+
+  const visibleMinX = Math.floor(worldLeft / HEX_STEP_X) - VIEW_PAD;
+  const visibleMaxX = Math.ceil(worldRight / HEX_STEP_X) + VIEW_PAD;
+  const visibleMinY = Math.floor(worldTop / HEX_H) - VIEW_PAD;
+  const visibleMaxY = Math.ceil(worldBottom / HEX_H) + VIEW_PAD;
+
+  function panBoardBy(dx, dy) {
+    setCameraPx((curr) => ({ x: curr.x + dx, y: curr.y + dy }));
+  }
 
   function heroGlyph(hero) {
     const name = hero.ownerPlayerName || "";
@@ -537,11 +582,58 @@ function DungeonTableView({ onBackToMenu }) {
         .ttd-board-scroll {
           flex: 1;
           min-height: 68vh;
-          overflow: auto;
+          overflow: hidden;
+          position: relative;
           border-radius: 12px;
           border: 1px solid rgba(148, 166, 186, 0.18);
           background: linear-gradient(180deg, rgba(15, 22, 30, 0.95), rgba(19, 28, 38, 0.95));
           padding: 12px;
+        }
+        .ttd-board-canvas {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          min-height: 64vh;
+          touch-action: none;
+        }
+        .ttd-pan-btn {
+          position: absolute;
+          z-index: 5;
+          width: 42px;
+          height: 42px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 166, 186, 0.35);
+          background: rgba(18, 26, 36, 0.92);
+          color: #d7e5f3;
+          font-size: 1.1rem;
+          font-weight: 800;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+          backdrop-filter: blur(2px);
+        }
+        .ttd-pan-btn:hover {
+          background: rgba(25, 35, 47, 0.96);
+        }
+        .ttd-pan-top {
+          top: 14px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .ttd-pan-right {
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+        .ttd-pan-bottom {
+          bottom: 14px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .ttd-pan-left {
+          left: 14px;
+          top: 50%;
+          transform: translateY(-50%);
         }
         .ttd-error {
           border: 1px solid rgba(255, 107, 107, 0.4);
@@ -750,24 +842,49 @@ function DungeonTableView({ onBackToMenu }) {
               </h2>
               <span className="ttd-pill">Live View</span>
             </div>
-            <div className="ttd-board-scroll">
-              <div
-                style={{
-                  position: "relative",
-                  width: (grid.w - 1) * (HEX_SIZE * 1.5) + HEX_SIZE * 2,
-                  height: grid.h * HEX_H + HEX_H / 2,
-                  margin: "0 auto",
-                  touchAction: "manipulation"
-                }}
+            <div className="ttd-board-scroll" ref={boardScrollRef}>
+              <button
+                className="ttd-pan-btn ttd-pan-top"
+                aria-label="Scroll board up"
+                onClick={() => panBoardBy(0, -(boardViewport.height || 240) * 0.5)}
               >
-                {Array.from({ length: grid.h }).map((_, y) =>
-                  Array.from({ length: grid.w }).map((__, x) => {
+                ↑
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-right"
+                aria-label="Scroll board right"
+                onClick={() => panBoardBy((boardViewport.width || 300) * 0.5, 0)}
+              >
+                →
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-bottom"
+                aria-label="Scroll board down"
+                onClick={() => panBoardBy(0, (boardViewport.height || 240) * 0.5)}
+              >
+                ↓
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-left"
+                aria-label="Scroll board left"
+                onClick={() => panBoardBy(-(boardViewport.width || 300) * 0.5, 0)}
+              >
+                ←
+              </button>
+
+              <div className="ttd-board-canvas">
+                {Array.from({ length: visibleMaxX - visibleMinX + 1 }).map((_, xi) => {
+                  const x = visibleMinX + xi;
+                  return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
+                    const y = visibleMinY + yi;
                     const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
                     const isEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
                     const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
 
-                    const left = x * (HEX_SIZE * 1.5);
-                    const top = y * HEX_H + (x % 2 === 0 ? 0 : HEX_H / 2);
+                    const worldX = x * HEX_STEP_X;
+                    const worldY = y * HEX_H + (x % 2 !== 0 ? HEX_H / 2 : 0);
+                    const left = worldX - cameraPx.x + boardViewport.width / 2;
+                    const top = worldY - cameraPx.y + boardViewport.height / 2;
 
                     const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "EN" : "";
                     const isMoveOption = moveOptions.has(`${x},${y}`);
@@ -800,8 +917,8 @@ function DungeonTableView({ onBackToMenu }) {
                           alignItems: "center",
                           justifyContent: "center",
                           userSelect: "none",
-                          fontSize: 12,
-                          padding: 6,
+                          fontSize: 11,
+                          padding: 4,
                           color: "var(--ttd-ink)",
                           fontWeight: 800,
                           cursor: isEnemy ? "pointer" : "default"
@@ -860,8 +977,8 @@ function DungeonTableView({ onBackToMenu }) {
                         ) : null}
                       </div>
                     );
-                  })
-                )}
+                  });
+                })}
               </div>
             </div>
           </section>
