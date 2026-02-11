@@ -2,11 +2,14 @@ import { WebSocketServer } from "ws";
 import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
+import { loadCampaignState, pickOrCreateCampaignPlayer, saveCampaignState } from "./campaign-store.js";
 import {
   ActionType,
+  firstLivingEnemy,
   findNearestPassableHex,
   hexNeighbors,
   isTerrainPassable,
+  livingEnemies,
   makeInitialGameState,
   manhattan,
   nextActivePlayer,
@@ -51,11 +54,37 @@ export function setupWebSocket(server) {
   const wss = new WebSocketServer({ server });
 
   const session = makeSession();
+  const campaign = loadCampaignState();
   let tableWs = null;
-  let game = null;
+  let game = campaign.activeGame || null;
   const gameHistory = [];
 
   const clients = new Map(); // ws -> { clientId, role, playerId?, seat? }
+
+  function ensureGameShape() {
+    if (!game) return;
+    if (!Array.isArray(game.enemies)) {
+      game.enemies = game.enemy ? [game.enemy] : [];
+      delete game.enemy;
+    }
+    if (!game.scenario) {
+      game.scenario = {
+        id: "scenario-1",
+        title: "Scenario 1: Rift Breach",
+        objective: { type: "defeat", targetCount: 2 },
+        defeatedCount: 0,
+        status: "active"
+      };
+    }
+  }
+
+  function saveCampaignSnapshot() {
+    ensureGameShape();
+    campaign.activeGame = game ? cloneGameState(game) : null;
+    saveCampaignState(campaign);
+  }
+
+  ensureGameShape();
 
   function shortName(pid) {
     const s = session.seats.find((x) => x.playerId === pid);
@@ -96,7 +125,10 @@ export function setupWebSocket(server) {
   }
 
   function computePublicState() {
+    ensureGameShape();
     const nameById = new Map(session.seats.filter((s) => s.playerId).map((s) => [s.playerId, s.playerName]));
+    const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
+    const primaryEnemy = game ? firstLivingEnemy(game) : null;
     return {
       sessionId: session.sessionId,
       seats: session.seats.map((s) => ({
@@ -109,26 +141,54 @@ export function setupWebSocket(server) {
         ? {
             grid: game.grid,
             terrain: game.terrain ? { seed: game.terrain.seed, theme: game.terrain.theme } : null,
-            turn: { activePlayerId: game.turn.activePlayerId, activePlayerName: nameById.get(game.turn.activePlayerId) || null, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
+            scenario: game.scenario
+              ? {
+                  id: game.scenario.id,
+                  title: game.scenario.title,
+                  objective: game.scenario.objective,
+                  defeatedCount: game.scenario.defeatedCount,
+                  status: game.scenario.status
+                }
+              : null,
+            campaign: {
+              id: campaign.id,
+              title: campaign.title,
+              currentScenarioId: campaign.progression?.currentScenarioId || null,
+              victories: campaign.progression?.victories || 0
+            },
+            turn: { activePlayerId: game.turn.activePlayerId, activePlayerName: nameById.get(game.turn.activePlayerId) || campaignNameById.get(game.turn.activePlayerId) || null, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
             heroes: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
-              ownerPlayerName: nameById.get(h.ownerPlayerId) || null,
+              ownerPlayerName: nameById.get(h.ownerPlayerId) || campaignNameById.get(h.ownerPlayerId) || null,
               x: h.x,
               y: h.y,
               hp: h.hp,
               maxHp: h.maxHp
             })),
-            enemy: {
-              id: game.enemy.id,
-              name: game.enemy.name || null,
-              art: game.enemy.art || null,
-              flavor: game.enemy.flavor || null,
-              attackPower: game.enemy.attackPower ?? game.rules.enemyDamage,
-              x: game.enemy.x,
-              y: game.enemy.y,
-              hp: game.enemy.hp,
-              maxHp: game.enemy.maxHp
-            },
+            enemies: (game.enemies || []).map((enemyUnit) => ({
+              id: enemyUnit.id,
+              name: enemyUnit.name || null,
+              art: enemyUnit.art || null,
+              flavor: enemyUnit.flavor || null,
+              attackPower: enemyUnit.attackPower ?? game.rules.enemyDamage,
+              x: enemyUnit.x,
+              y: enemyUnit.y,
+              hp: enemyUnit.hp,
+              maxHp: enemyUnit.maxHp
+            })),
+            enemy: primaryEnemy
+              ? {
+                  id: primaryEnemy.id,
+                  name: primaryEnemy.name || null,
+                  art: primaryEnemy.art || null,
+                  flavor: primaryEnemy.flavor || null,
+                  attackPower: primaryEnemy.attackPower ?? game.rules.enemyDamage,
+                  x: primaryEnemy.x,
+                  y: primaryEnemy.y,
+                  hp: primaryEnemy.hp,
+                  maxHp: primaryEnemy.maxHp
+                }
+              : null,
             rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
             log: game.log.slice(-10)
           }
@@ -137,9 +197,13 @@ export function setupWebSocket(server) {
   }
 
   function computePrivateState(playerId) {
+    ensureGameShape();
     const seat = session.seats.find((s) => s.playerId === playerId);
     const isActive = game?.turn.activePlayerId === playerId;
     const hero = game?.heroes?.[playerId] ?? null;
+    const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
+    const primaryEnemy = game ? firstLivingEnemy(game) : null;
+    const scenarioWon = game?.scenario?.status === "victory";
 
     return {
       sessionId: session.sessionId,
@@ -149,6 +213,21 @@ export function setupWebSocket(server) {
             youAreActive: isActive,
             grid: game.grid,
             terrain: game.terrain ? { seed: game.terrain.seed, theme: game.terrain.theme } : null,
+            scenario: game.scenario
+              ? {
+                  id: game.scenario.id,
+                  title: game.scenario.title,
+                  objective: game.scenario.objective,
+                  defeatedCount: game.scenario.defeatedCount,
+                  status: game.scenario.status
+                }
+              : null,
+            campaign: {
+              id: campaign.id,
+              title: campaign.title,
+              currentScenarioId: campaign.progression?.currentScenarioId || null,
+              victories: campaign.progression?.victories || 0
+            },
             rules: {
               moveRange: game.rules.moveRange,
               attackRange: game.rules.attackRange,
@@ -156,24 +235,40 @@ export function setupWebSocket(server) {
             },
             heroesPublic: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
-              ownerPlayerName: session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName || null,
+              ownerPlayerName:
+                session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName ||
+                campaignNameById.get(h.ownerPlayerId) ||
+                null,
               x: h.x,
               y: h.y,
               hp: h.hp,
               maxHp: h.maxHp
             })),
             hero: hero ? { x: hero.x, y: hero.y, hp: hero.hp, maxHp: hero.maxHp } : null,
-            enemy: {
-              id: game.enemy.id,
-              name: game.enemy.name || null,
-              art: game.enemy.art || null,
-              flavor: game.enemy.flavor || null,
-              attackPower: game.enemy.attackPower ?? game.rules.enemyDamage,
-              x: game.enemy.x,
-              y: game.enemy.y,
-              hp: game.enemy.hp,
-              maxHp: game.enemy.maxHp
-            },
+            enemies: (game.enemies || []).map((enemyUnit) => ({
+              id: enemyUnit.id,
+              name: enemyUnit.name || null,
+              art: enemyUnit.art || null,
+              flavor: enemyUnit.flavor || null,
+              attackPower: enemyUnit.attackPower ?? game.rules.enemyDamage,
+              x: enemyUnit.x,
+              y: enemyUnit.y,
+              hp: enemyUnit.hp,
+              maxHp: enemyUnit.maxHp
+            })),
+            enemy: primaryEnemy
+              ? {
+                  id: primaryEnemy.id,
+                  name: primaryEnemy.name || null,
+                  art: primaryEnemy.art || null,
+                  flavor: primaryEnemy.flavor || null,
+                  attackPower: primaryEnemy.attackPower ?? game.rules.enemyDamage,
+                  x: primaryEnemy.x,
+                  y: primaryEnemy.y,
+                  hp: primaryEnemy.hp,
+                  maxHp: primaryEnemy.maxHp
+                }
+              : null,
             apRemaining: game.turn.apRemaining,
             apMax: game.turn.apMax,
             lastHeroDamage:
@@ -186,7 +281,9 @@ export function setupWebSocket(server) {
                   }
                 : null,
             allowedActions:
-              isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
+              scenarioWon
+                ? []
+                : isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
                 ? [ActionType.MOVE, ActionType.ATTACK, ActionType.END_TURN]
                 : isActive && hero && hero.hp > 0
                   ? [ActionType.END_TURN]
@@ -197,6 +294,7 @@ export function setupWebSocket(server) {
   }
 
   function emitViews() {
+    saveCampaignSnapshot();
     if (tableWs) send(tableWs, makeMsg(MsgType.STATE_PUBLIC, { state: computePublicState() }));
     for (const [ws, info] of clients.entries()) {
       if (info.role === Role.PHONE && info.playerId) {
@@ -234,58 +332,95 @@ export function setupWebSocket(server) {
     return false;
   }
 
+  function enemyAt(x, y) {
+    if (!game) return null;
+    return (game.enemies || []).find((enemyUnit) => enemyUnit.hp > 0 && enemyUnit.x === x && enemyUnit.y === y) || null;
+  }
+
+  function cellOccupiedByLiveEnemy(x, y) {
+    return Boolean(enemyAt(x, y));
+  }
+
+  function markEnemyDefeated(enemyUnit) {
+    if (!game || !enemyUnit) return;
+    const objectiveTarget = game?.scenario?.objective?.targetCount ?? 2;
+    game.scenario.defeatedCount = (game.scenario.defeatedCount ?? 0) + 1;
+    game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount}/${objectiveTarget}).` });
+
+    if (game.scenario.status !== "victory" && game.scenario.defeatedCount >= objectiveTarget) {
+      game.scenario.status = "victory";
+      game.log.push({ at: Date.now(), msg: "Scenario complete: Victory!" });
+      campaign.progression = campaign.progression || {};
+      campaign.progression.victories = (campaign.progression.victories || 0) + 1;
+      const completed = Array.isArray(campaign.progression.completedScenarioIds) ? campaign.progression.completedScenarioIds : [];
+      if (!completed.includes(game.scenario.id)) completed.push(game.scenario.id);
+      campaign.progression.completedScenarioIds = completed;
+      for (const pid of game.turn.order || []) {
+        const player = (campaign.players || []).find((p) => p.id === pid);
+        if (!player) continue;
+        player.stats = player.stats || { victories: 0, scenariosCompleted: 0 };
+        player.stats.victories = (player.stats.victories || 0) + 1;
+        player.stats.scenariosCompleted = (player.stats.scenariosCompleted || 0) + 1;
+      }
+    }
+  }
+
   function enemyTakeTurn() {
     if (!game) return;
-    if (game.enemy.hp <= 0) return;
+    if (game.scenario?.status === "victory") return;
     const terrainSeed = game?.terrain?.seed ?? 0;
 
     const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h));
     if (!aliveHeroes.length) return;
 
-    const inRange = aliveHeroes.filter((h) => manhattan(h, game.enemy) <= game.rules.attackRange);
-    if (inRange.length) {
-      const target = [...inRange].sort((a, b) => a.hp - b.hp || manhattan(a, game.enemy) - manhattan(b, game.enemy))[0];
+    for (const enemyUnit of livingEnemies(game)) {
+      const inRange = aliveHeroes.filter((h) => manhattan(h, enemyUnit) <= game.rules.attackRange);
+      if (inRange.length) {
+        const target = [...inRange].sort((a, b) => a.hp - b.hp || manhattan(a, enemyUnit) - manhattan(b, enemyUnit))[0];
+        target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
+        game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Enemy"} hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
+        if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
+        continue;
+      }
 
-      target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
-      game.log.push({ at: Date.now(), msg: `Enemy hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
-      if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
-      return;
-    }
+      const occupiedByLiveHero = (x, y) => aliveHeroes.some((h) => h.x === x && h.y === y);
+      const occupiedByOtherEnemy = (x, y) =>
+        (game.enemies || []).some((e) => e.id !== enemyUnit.id && e.hp > 0 && e.x === x && e.y === y);
+      const nearestHeroDistance = (pos) => {
+        let best = Number.POSITIVE_INFINITY;
+        for (const h of aliveHeroes) best = Math.min(best, manhattan(pos, h));
+        return best;
+      };
 
-    const occupiedByLiveHero = (x, y) => aliveHeroes.some((h) => h.x === x && h.y === y);
-    const nearestHeroDistance = (pos) => {
-      let best = Number.POSITIVE_INFINITY;
-      for (const h of aliveHeroes) best = Math.min(best, manhattan(pos, h));
-      return best;
-    };
+      const currentDist = nearestHeroDistance(enemyUnit);
+      const candidates = hexNeighbors(enemyUnit.x, enemyUnit.y)
+        .filter((p) => isTerrainPassable(p.x, p.y, terrainSeed))
+        .filter((p) => !occupiedByLiveHero(p.x, p.y))
+        .filter((p) => !occupiedByOtherEnemy(p.x, p.y));
 
-    const currentDist = nearestHeroDistance(game.enemy);
-    const candidates = hexNeighbors(game.enemy.x, game.enemy.y)
-      .filter((p) => isTerrainPassable(p.x, p.y, terrainSeed))
-      .filter((p) => !occupiedByLiveHero(p.x, p.y));
+      let bestStep = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const p of candidates) {
+        const d = nearestHeroDistance(p);
+        if (d < bestDist || (d === bestDist && (bestStep === null || p.y < bestStep.y || (p.y === bestStep.y && p.x < bestStep.x)))) {
+          bestDist = d;
+          bestStep = p;
+        }
+      }
 
-    let bestStep = null;
-    let bestDist = Number.POSITIVE_INFINITY;
-    for (const p of candidates) {
-      const d = nearestHeroDistance(p);
-      if (d < bestDist || (d === bestDist && (bestStep === null || p.y < bestStep.y || (p.y === bestStep.y && p.x < bestStep.x)))) {
-        bestDist = d;
-        bestStep = p;
+      if (bestStep && bestDist < currentDist) {
+        enemyUnit.x = bestStep.x;
+        enemyUnit.y = bestStep.y;
+        game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Enemy"} moves to (${bestStep.x},${bestStep.y}).` });
+      } else {
+        game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Enemy"} waits.` });
       }
     }
-
-    if (bestStep && bestDist < currentDist) {
-      game.enemy.x = bestStep.x;
-      game.enemy.y = bestStep.y;
-      game.log.push({ at: Date.now(), msg: `Enemy moves to (${bestStep.x},${bestStep.y}).` });
-      return;
-    }
-
-    game.log.push({ at: Date.now(), msg: "Enemy waits." });
   }
 
   function handleMove(ws, id, actorPlayerId, params) {
     if (!requireActive(ws, id, actorPlayerId)) return;
+    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
     // Action points
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
@@ -303,7 +438,7 @@ export function setupWebSocket(server) {
     if (dist > game.rules.moveRange) return reject(ws, id, "OUT_OF_RANGE", `Move too far (range ${game.rules.moveRange}).`);
     if (!isTerrainPassable(nx, ny, terrainSeed)) return reject(ws, id, "BLOCKED", "Cell is blocked terrain.");
 
-    if (nx === game.enemy.x && ny === game.enemy.y && game.enemy.hp > 0) return reject(ws, id, "BLOCKED", "Cell occupied by enemy.");
+    if (cellOccupiedByLiveEnemy(nx, ny)) return reject(ws, id, "BLOCKED", "Cell occupied by enemy.");
     if (cellOccupiedByOtherHero(nx, ny, actorPlayerId)) return reject(ws, id, "BLOCKED", "Cell occupied by another hero.");
 
     pushGameHistory();
@@ -316,29 +451,33 @@ export function setupWebSocket(server) {
 
   function handleAttack(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
+    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
     // Action points
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
     if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
-    if (game.enemy.hp <= 0) return reject(ws, id, "ENEMY_DEAD", "Enemy already defeated.");
-
-    const dist = manhattan(hero, game.enemy);
-    if (dist > game.rules.attackRange) return reject(ws, id, "OUT_OF_RANGE", `Enemy out of range (range ${game.rules.attackRange}).`);
+    const targets = livingEnemies(game)
+      .map((enemyUnit) => ({ enemyUnit, dist: manhattan(hero, enemyUnit) }))
+      .filter((x) => x.dist <= game.rules.attackRange)
+      .sort((a, b) => a.enemyUnit.hp - b.enemyUnit.hp || a.dist - b.dist || a.enemyUnit.id.localeCompare(b.enemyUnit.id));
+    if (!targets.length) return reject(ws, id, "OUT_OF_RANGE", `No enemy in range (range ${game.rules.attackRange}).`);
+    const target = targets[0].enemyUnit;
 
     pushGameHistory();
-    const enemyHpBefore = game.enemy.hp;
-    game.enemy.hp = clamp(game.enemy.hp - game.rules.heroDamage, 0, game.enemy.maxHp);
-    const dealt = enemyHpBefore - game.enemy.hp;
+    const enemyHpBefore = target.hp;
+    target.hp = clamp(target.hp - game.rules.heroDamage, 0, target.maxHp);
+    const dealt = enemyHpBefore - target.hp;
     game.lastHeroDamage = {
       actorPlayerId,
       amount: dealt,
-      enemyHp: game.enemy.hp,
-      enemyMaxHp: game.enemy.maxHp,
+      enemyId: target.id,
+      enemyHp: target.hp,
+      enemyMaxHp: target.maxHp,
       at: Date.now()
     };
-    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks for ${game.rules.heroDamage}.` });
+    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks ${target.name || "enemy"} for ${game.rules.heroDamage}.` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
-    if (game.enemy.hp <= 0) game.log.push({ at: Date.now(), msg: "Enemy defeated!" });
+    if (target.hp <= 0) markEnemyDefeated(target);
 
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
@@ -346,6 +485,7 @@ export function setupWebSocket(server) {
 
   function handleEndTurn(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
+    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
 
     pushGameHistory();
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
@@ -384,8 +524,31 @@ export function setupWebSocket(server) {
     return null;
   }
 
+  function occupiedCampaignPlayerIds() {
+    const ids = new Set();
+    for (const s of session.seats) {
+      if (s.occupied && s.playerId) ids.add(s.playerId);
+    }
+    return ids;
+  }
+
+  function assignSeatToCampaignPlayer(seatObj, campaignPlayer, info) {
+    const token = uuid();
+    seatObj.occupied = true;
+    seatObj.playerName = campaignPlayer.name;
+    seatObj.playerId = campaignPlayer.id;
+    seatObj.resumeToken = token;
+    info.playerId = campaignPlayer.id;
+    info.seat = seatObj.seat;
+    ensureGameFor(campaignPlayer.id, seatObj.seat - 1);
+    game.log.push({ at: Date.now(), msg: `Player joined campaign: ${campaignPlayer.name} (${campaignPlayer.id.slice(0, 4)})` });
+    saveCampaignState(campaign);
+    return token;
+  }
+
   function handleSpawnEnemy(ws, id) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
+    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
 
     const terrainSeed = game?.terrain?.seed ?? 0;
     const occupied = new Set(
@@ -393,6 +556,7 @@ export function setupWebSocket(server) {
         .filter((h) => isHeroAlive(h))
         .map((h) => `${h.x},${h.y}`)
     );
+    for (const enemyUnit of livingEnemies(game)) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
     const anchor =
       game.heroes[game.turn.activePlayerId] ||
       Object.values(game.heroes).find((h) => isHeroAlive(h)) ||
@@ -407,11 +571,21 @@ export function setupWebSocket(server) {
     }
 
     pushGameHistory();
-    game.enemy.x = spawn.x;
-    game.enemy.y = spawn.y;
-    game.enemy.hp = game.enemy.maxHp;
+    const enemyNumber = (game.enemies?.length || 0) + 1;
+    game.enemies = game.enemies || [];
+    game.enemies.push({
+      id: `enemy-${enemyNumber}`,
+      name: "Rift Stalker",
+      art: "RST",
+      flavor: "A warped predator that lunges from weak points in the veil.",
+      attackPower: game.rules.enemyDamage,
+      x: spawn.x,
+      y: spawn.y,
+      hp: 6,
+      maxHp: 6
+    });
     game.lastHeroDamage = null;
-    game.log.push({ at: Date.now(), msg: `Enemy spawned at (${spawn.x},${spawn.y}) by table.` });
+    game.log.push({ at: Date.now(), msg: `Monster spawned at (${spawn.x},${spawn.y}) by table.` });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, spawn }, id));
     emitViews();
@@ -422,6 +596,7 @@ export function setupWebSocket(server) {
     if (!gameHistory.length) return reject(ws, id, "NO_UNDO", "No previous actions to undo.");
 
     game = gameHistory.pop();
+    ensureGameShape();
     send(ws, makeMsg(MsgType.OK, { accepted: true, undone: true, historyDepth: gameHistory.length }, id));
     emitViews();
   }
@@ -496,6 +671,7 @@ export function setupWebSocket(server) {
 
   function handleAction(ws, id, actorPlayerId, payload) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
+    ensureGameShape();
 
     const action = payload?.action;
     const params = payload?.params ?? {};
@@ -554,7 +730,17 @@ export function setupWebSocket(server) {
     ws.on("close", () => {
       const info = clients.get(ws);
       if (info?.role === Role.TABLE && tableWs === ws) tableWs = null;
+      if (info?.role === Role.PHONE && info.seat) {
+        const seatObj = session.seats[info.seat - 1];
+        if (seatObj && seatObj.playerId === info.playerId) {
+          seatObj.occupied = false;
+          seatObj.playerName = null;
+          seatObj.playerId = null;
+          seatObj.resumeToken = null;
+        }
+      }
       clients.delete(ws);
+      emitViews();
     });
   });
 
@@ -604,8 +790,6 @@ export function setupWebSocket(server) {
         return;
       }
 
-      // RECLAIM: if a seat is already occupied by the same name but the prior client is gone,
-      // allow the player to reclaim that seat (useful if localStorage token was lost or a first-join glitch happened).
       const nameKey = playerName.toLowerCase();
       const canReclaim = (s) => !!s && s.occupied && (s.playerName || "").toLowerCase() === nameKey && !isPlayerConnected(s.playerId);
       let reclaimSeat = null;
@@ -613,24 +797,17 @@ export function setupWebSocket(server) {
         const cand = session.seats[requestedSeat - 1];
         if (canReclaim(cand)) reclaimSeat = cand;
       }
-      if (!reclaimSeat) {
-        const byName = session.seats.find((s) => canReclaim(s)) || null;
-        if (byName) reclaimSeat = byName;
-      }
+      if (!reclaimSeat) reclaimSeat = session.seats.find((s) => canReclaim(s)) || null;
       if (reclaimSeat) {
         const token = uuid();
         reclaimSeat.resumeToken = token;
         info.playerId = reclaimSeat.playerId;
         info.seat = reclaimSeat.seat;
-        // Make sure the game has a hero for this player.
         ensureGameFor(reclaimSeat.playerId, reclaimSeat.seat - 1);
         send(ws, makeMsg(MsgType.OK, { playerId: reclaimSeat.playerId, seat: reclaimSeat.seat, resumeToken: token, reclaimed: true }, msg.id));
         emitViews();
         return;
       }
-
-      // normal seat selection
-      
 
       let seatObj = null;
       if (Number.isFinite(requestedSeat) && requestedSeat >= 1 && requestedSeat <= session.seats.length) {
@@ -640,21 +817,10 @@ export function setupWebSocket(server) {
       if (!seatObj) seatObj = session.seats.find((s) => !s.occupied) ?? null;
       if (!seatObj) return reject(ws, msg.id, "NO_SEATS", "No seats available");
 
-      const playerId = uuid().slice(0, 8);
-      const token = uuid();
+      const campaignPlayer = pickOrCreateCampaignPlayer(campaign, playerName, occupiedCampaignPlayerIds());
+      const token = assignSeatToCampaignPlayer(seatObj, campaignPlayer, info);
 
-      seatObj.occupied = true;
-      seatObj.playerName = playerName;
-      seatObj.playerId = playerId;
-      seatObj.resumeToken = token;
-
-      info.playerId = playerId;
-      info.seat = seatObj.seat;
-
-      ensureGameFor(playerId, seatObj.seat - 1);
-      game.log.push({ at: Date.now(), msg: `Player joined: ${playerName} (${playerId.slice(0, 4)})` });
-
-      send(ws, makeMsg(MsgType.OK, { playerId, seat: seatObj.seat, resumeToken: token }, msg.id));
+      send(ws, makeMsg(MsgType.OK, { playerId: campaignPlayer.id, seat: seatObj.seat, resumeToken: token, campaignPlayerId: campaignPlayer.id }, msg.id));
       emitViews();
       return;
     }

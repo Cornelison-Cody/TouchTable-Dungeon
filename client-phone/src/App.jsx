@@ -179,7 +179,9 @@ export default function App() {
   const g = privateState?.game || null;
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
-  const enemy = g?.enemy || null;
+  const enemies = g?.enemies || (g?.enemy ? [g.enemy] : []);
+  const livingEnemies = enemies.filter((e) => e && e.hp > 0);
+  const scenario = g?.scenario || null;
   const terrainSeed = g?.terrain?.seed ?? 0;
   const heroesPublic = g?.heroesPublic || [];
   const apRemaining = g?.apRemaining ?? 0;
@@ -190,7 +192,7 @@ export default function App() {
   for (const h of heroesPublic) {
     if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
   }
-  if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
+  for (const enemyUnit of livingEnemies) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
 
   const canSpendMove = allowed.has(ActionType.MOVE) && apRemaining > 0;
   const neighborCells =
@@ -221,7 +223,7 @@ export default function App() {
     const hit = privateState?.game?.lastHeroDamage;
     if (!hit?.at || hit.at <= seenDamageAtRef.current) return;
     seenDamageAtRef.current = hit.at;
-    const fx = { id: hit.at, amount: hit.amount, enemyHp: hit.enemyHp, enemyMaxHp: hit.enemyMaxHp };
+    const fx = { id: hit.at, enemyId: hit.enemyId || null, amount: hit.amount, enemyHp: hit.enemyHp, enemyMaxHp: hit.enemyMaxHp };
     setDamageFx(fx);
     const t = setTimeout(() => {
       setDamageFx((curr) => (curr && curr.id === fx.id ? null : curr));
@@ -374,6 +376,10 @@ export default function App() {
 
               {!active || !hero ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
+              ) : scenario?.status === "victory" ? (
+                <p style={{ marginBottom: 0, color: theme.success, fontWeight: 800 }}>
+                  Victory! Scenario complete ({scenario?.defeatedCount || 0}/{scenario?.objective?.targetCount || 0} monsters defeated).
+                </p>
               ) : (!allowed.has(ActionType.MOVE) || apRemaining <= 0) && !damageFx ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
               ) : (
@@ -403,11 +409,12 @@ export default function App() {
                         const left = centerLeft + ((c.x - hero.x) * xStep);
                         const top = centerTop + ((c.y - hero.y) * yStep) + (cParityOffset - heroParityOffset);
 
-                        const hasEnemy = enemy && enemy.hp > 0 && enemy.x === c.x && enemy.y === c.y;
+                        const enemyHere = livingEnemies.find((e) => e.x === c.x && e.y === c.y) || null;
+                        const hasEnemy = Boolean(enemyHere);
                         const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
                         const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
                         const canTap = c.canMove || canAttack;
-                        const showDamageFx = Boolean(hasEnemy && damageFx);
+                        const showDamageFx = Boolean(hasEnemy && damageFx && (!damageFx.enemyId || damageFx.enemyId === enemyHere.id));
                         const terrain = c.terrain;
                         const blockedTerrain = !terrain.passable;
 

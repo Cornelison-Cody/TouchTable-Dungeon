@@ -272,12 +272,45 @@ export function findNearestPassableHex(startX, startY, terrainSeed = 0, isBlocke
   return { x: sx, y: sy };
 }
 
+export function livingEnemies(game) {
+  return (game?.enemies || []).filter((e) => e && e.hp > 0);
+}
+
+export function firstLivingEnemy(game) {
+  return livingEnemies(game)[0] || null;
+}
+
+function spawnScenarioOneEnemies(terrainSeed, occupiedKeys) {
+  const desired = [
+    { x: 7, y: 4 },
+    { x: 8, y: 5 },
+    { x: 6, y: 4 },
+    { x: 7, y: 6 }
+  ];
+
+  return desired.map((p, idx) => {
+    const spawn = findNearestPassableHex(p.x, p.y, terrainSeed, (x, y) => occupiedKeys.has(`${x},${y}`), 28);
+    occupiedKeys.add(`${spawn.x},${spawn.y}`);
+    return {
+      id: `enemy-${idx + 1}`,
+      name: "Rift Stalker",
+      art: "RST",
+      flavor: "A warped predator that lunges from weak points in the veil.",
+      attackPower: 1,
+      x: spawn.x,
+      y: spawn.y,
+      hp: 6,
+      maxHp: 6
+    };
+  });
+}
+
 export function makeInitialGameState(firstPlayerId) {
   const terrainSeed = Math.floor(Math.random() * 0x7fffffff);
   const occupied = new Set();
   const heroSpawn = findNearestPassableHex(1, 1, terrainSeed, (x, y) => occupied.has(`${x},${y}`), 24);
   occupied.add(`${heroSpawn.x},${heroSpawn.y}`);
-  const enemySpawn = findNearestPassableHex(7, 4, terrainSeed, (x, y) => occupied.has(`${x},${y}`), 32);
+  const enemies = spawnScenarioOneEnemies(terrainSeed, occupied);
 
   return {
     v: 1,
@@ -285,6 +318,16 @@ export function makeInitialGameState(firstPlayerId) {
     terrain: {
       seed: terrainSeed,
       theme: "frostwild-frontier"
+    },
+    scenario: {
+      id: "scenario-1",
+      title: "Scenario 1: Rift Breach",
+      objective: {
+        type: "defeat",
+        targetCount: 2
+      },
+      defeatedCount: 0,
+      status: "active"
     },
     turn: {
       order: [firstPlayerId],
@@ -303,17 +346,7 @@ export function makeInitialGameState(firstPlayerId) {
         maxHp: 10
       }
     },
-    enemy: {
-      id: "enemy-1",
-      name: "Rift Stalker",
-      art: "👾",
-      flavor: "A warped predator that lunges from weak points in the veil.",
-      attackPower: 1,
-      x: enemySpawn.x,
-      y: enemySpawn.y,
-      hp: 8,
-      maxHp: 8
-    },
+    enemies,
     rules: {
       moveRange: 1,
       attackRange: 1,
@@ -343,7 +376,9 @@ export function spawnHeroForPlayer(game, playerId, seatIndex = 0) {
       .filter((h) => h.hp > 0)
       .map((h) => `${h.x},${h.y}`)
   );
-  if (game.enemy?.hp > 0) occupied.add(`${game.enemy.x},${game.enemy.y}`);
+  for (const enemy of game.enemies || []) {
+    if (enemy?.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
+  }
   const spawn = findNearestPassableHex(desiredX, desiredY, terrainSeed, (x, y) => occupied.has(`${x},${y}`), 40);
 
   game.heroes[playerId] = {

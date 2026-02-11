@@ -24,6 +24,8 @@ const panelStyle = {
   padding: 14
 };
 
+const GRASSLAND_TEXTURE_URL = "/textures/grassland.webp";
+
 function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
 }
@@ -70,15 +72,17 @@ function DungeonTableView({ onBackToMenu }) {
   const [audioReady, setAudioReady] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [kickPrompt, setKickPrompt] = useState(null);
-  const [enemyInspectOpen, setEnemyInspectOpen] = useState(false);
+  const [enemyInspectId, setEnemyInspectId] = useState(null);
   const [cameraPx, setCameraPx] = useState({ x: 0, y: 0 });
   const [boardViewport, setBoardViewport] = useState({ width: 0, height: 0 });
 
   const wsRef = useRef(null);
-  const prevEnemyHpRef = useRef(null);
+  const prevEnemyHpRef = useRef({});
   const audioCtxRef = useRef(null);
   const boardScrollRef = useRef(null);
   const wasTurnStartRef = useRef(false);
+  const cameraPxRef = useRef({ x: 0, y: 0 });
+  const cameraAnimRef = useRef(null);
 
   useEffect(() => {
     setError(null);
@@ -231,13 +235,16 @@ function DungeonTableView({ onBackToMenu }) {
   const game = publicState?.game || null;
   const terrainSeed = game?.terrain?.seed ?? 0;
   const terrainTheme = game?.terrain?.theme || "frostwild-frontier";
+  const scenario = game?.scenario || null;
   const heroes = game?.heroes || [];
-  const enemy = game?.enemy || null;
+  const enemies = game?.enemies || (game?.enemy ? [game.enemy] : []);
+  const livingEnemies = enemies.filter((e) => e && e.hp > 0);
+  const primaryEnemy = livingEnemies[0] || null;
   const log = game?.log || [];
   const activePlayerId = game?.turn?.activePlayerId || null;
   const apMax = game?.turn?.apMax ?? 0;
   const apRemaining = game?.turn?.apRemaining ?? 0;
-  const enemyCount = enemy && enemy.hp > 0 ? 1 : 0;
+  const enemyCount = livingEnemies.length;
   const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
 
   useEffect(() => {
@@ -252,28 +259,38 @@ function DungeonTableView({ onBackToMenu }) {
   }, []);
 
   useEffect(() => {
-    const nextEnemy = publicState?.game?.enemy;
-    if (!nextEnemy) {
-      prevEnemyHpRef.current = null;
-      setEnemyInspectOpen(false);
+    const nextEnemies = (publicState?.game?.enemies || (publicState?.game?.enemy ? [publicState.game.enemy] : [])).filter((e) => e && e.id);
+    if (!nextEnemies.length) {
+      prevEnemyHpRef.current = {};
+      setEnemyInspectId(null);
       return;
     }
 
-    const prevHp = prevEnemyHpRef.current;
-    const nextHp = nextEnemy.hp;
+    const prevHpById = prevEnemyHpRef.current || {};
+    const nextHpById = {};
+    let damageFx = null;
     let timeoutId = null;
 
-    if (typeof prevHp === "number" && nextHp < prevHp) {
-      const amount = prevHp - nextHp;
-      const fx = { id: Date.now(), x: nextEnemy.x, y: nextEnemy.y, amount };
-      setTableHitFx(fx);
+    for (const enemyUnit of nextEnemies) {
+      nextHpById[enemyUnit.id] = enemyUnit.hp;
+      const prevHp = prevHpById[enemyUnit.id];
+      if (typeof prevHp === "number" && enemyUnit.hp < prevHp) {
+        const amount = prevHp - enemyUnit.hp;
+        if (!damageFx || amount > damageFx.amount) {
+          damageFx = { id: Date.now(), x: enemyUnit.x, y: enemyUnit.y, amount };
+        }
+      }
+    }
+
+    if (damageFx) {
+      setTableHitFx(damageFx);
       playHitSound();
       timeoutId = setTimeout(() => {
-        setTableHitFx((curr) => (curr && curr.id === fx.id ? null : curr));
+        setTableHitFx((curr) => (curr && curr.id === damageFx.id ? null : curr));
       }, 900);
     }
 
-    prevEnemyHpRef.current = nextHp;
+    prevEnemyHpRef.current = nextHpById;
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
@@ -290,7 +307,7 @@ function DungeonTableView({ onBackToMenu }) {
   for (const h of heroes) {
     if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
   }
-  if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
+  for (const enemyUnit of livingEnemies) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
 
   const moveOptions = new Set();
   if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
@@ -318,12 +335,62 @@ function DungeonTableView({ onBackToMenu }) {
     return () => window.removeEventListener("resize", updateViewport);
   }, []);
 
+  useEffect(() => {
+    cameraPxRef.current = cameraPx;
+  }, [cameraPx]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraAnimRef.current !== null) {
+        cancelAnimationFrame(cameraAnimRef.current);
+        cameraAnimRef.current = null;
+      }
+    };
+  }, []);
+
+  function easeInOutSmootherstep(t) {
+    // Smoother than cubic: zero slope and zero acceleration at both ends.
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  function animateCameraTo(target, durationMs = 600) {
+    if (!target) return;
+    if (cameraAnimRef.current !== null) {
+      cancelAnimationFrame(cameraAnimRef.current);
+      cameraAnimRef.current = null;
+    }
+
+    const from = cameraPxRef.current;
+    const dx = target.x - from.x;
+    const dy = target.y - from.y;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+
+    const startTs = performance.now();
+    const run = (ts) => {
+      const raw = Math.min(1, (ts - startTs) / Math.max(1, durationMs));
+      const t = easeInOutSmootherstep(raw);
+      const next = {
+        x: from.x + dx * t,
+        y: from.y + dy * t
+      };
+      cameraPxRef.current = next;
+      setCameraPx(next);
+      if (raw < 1) {
+        cameraAnimRef.current = requestAnimationFrame(run);
+      } else {
+        cameraAnimRef.current = null;
+      }
+    };
+
+    cameraAnimRef.current = requestAnimationFrame(run);
+  }
+
   function centerCameraOnUnit(unit) {
     if (!unit) return;
-    setCameraPx({
+    animateCameraTo({
       x: unit.x * HEX_STEP_X,
       y: unit.y * HEX_H + (unit.x % 2 !== 0 ? HEX_H / 2 : 0)
-    });
+    }, 700);
   }
 
   useEffect(() => {
@@ -331,13 +398,13 @@ function DungeonTableView({ onBackToMenu }) {
     if (isTurnStart && !wasTurnStartRef.current) {
       const focus =
         (activeHero && activeHero.hp > 0 ? activeHero : null) ||
-        (enemy && enemy.hp > 0 ? enemy : null) ||
+        (primaryEnemy && primaryEnemy.hp > 0 ? primaryEnemy : null) ||
         heroes.find((h) => h.hp > 0) ||
         null;
       centerCameraOnUnit(focus);
     }
     wasTurnStartRef.current = isTurnStart;
-  }, [activeHero, heroes, enemy, apRemaining, apMax, HEX_H, HEX_STEP_X]);
+  }, [activeHero, heroes, primaryEnemy, apRemaining, apMax, HEX_H, HEX_STEP_X]);
 
   const viewportW = boardViewport.width || 1;
   const viewportH = boardViewport.height || 1;
@@ -352,7 +419,8 @@ function DungeonTableView({ onBackToMenu }) {
   const visibleMaxY = Math.ceil(worldBottom / HEX_H) + VIEW_PAD;
 
   function panBoardBy(dx, dy) {
-    setCameraPx((curr) => ({ x: curr.x + dx, y: curr.y + dy }));
+    const curr = cameraPxRef.current;
+    animateCameraTo({ x: curr.x + dx, y: curr.y + dy }, 760);
   }
 
   function heroGlyph(hero) {
@@ -379,17 +447,30 @@ function DungeonTableView({ onBackToMenu }) {
     };
   }
 
-  function renderTerrainTexture(terrain, width, height) {
+  function renderTerrainTexture(terrain, width, height, textureId) {
     if (!terrain) return null;
 
     if (terrain.id === "grassland" || terrain.id === "high_grass") {
       return (
-        <g stroke="rgba(214, 239, 180, 0.3)" strokeWidth="1.5" fill="none" strokeLinecap="round">
-          <path d={`M${width * 0.28} ${height * 0.84} L${width * 0.34} ${height * 0.48}`} />
-          <path d={`M${width * 0.42} ${height * 0.9} L${width * 0.48} ${height * 0.42}`} />
-          <path d={`M${width * 0.58} ${height * 0.9} L${width * 0.62} ${height * 0.5}`} />
-          <path d={`M${width * 0.7} ${height * 0.82} L${width * 0.74} ${height * 0.52}`} />
-        </g>
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={GRASSLAND_TEXTURE_URL}
+                x="0"
+                y="0"
+                width={width}
+                height={height}
+                preserveAspectRatio="xMidYMid slice"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            opacity={0.52}
+          />
+        </>
       );
     }
 
@@ -447,7 +528,9 @@ function DungeonTableView({ onBackToMenu }) {
     return null;
   }
 
-  const viewedEnemy = enemyProfile(enemy);
+  const viewedEnemy = enemyProfile(
+    livingEnemies.find((e) => e.id === enemyInspectId) || primaryEnemy
+  );
 
   return (
     <div className="ttd-root">
@@ -890,8 +973,15 @@ function DungeonTableView({ onBackToMenu }) {
                     <strong style={mono}>{enemyCount}</strong>
                   </div>
                   <div className="ttd-stat">
-                    <label>HP Display</label>
-                    <strong style={mono}>On Board</strong>
+                    <label>Scenario Goal</label>
+                    <strong style={mono}>
+                      {scenario?.objective?.targetCount
+                        ? `${scenario?.defeatedCount || 0}/${scenario.objective.targetCount} defeated`
+                        : "In progress"}
+                    </strong>
+                    <div style={{ marginTop: 4, color: "var(--ttd-sub)", fontSize: "0.75rem", fontWeight: 700 }}>
+                      {scenario?.status === "victory" ? "Victory" : "Active"}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -973,8 +1063,10 @@ function DungeonTableView({ onBackToMenu }) {
                   return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
                     const y = visibleMinY + yi;
                     const terrain = getTerrain(x, y);
+                    const terrainTextureId = `ttd-terrain-${x}-${y}`.replace(/[^a-zA-Z0-9_-]/g, "_");
                     const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
-                    const isEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
+                    const enemyHere = livingEnemies.find((e) => e.x === x && e.y === y) || null;
+                    const isEnemy = Boolean(enemyHere);
                     const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
                     const isBlockedTerrain = !terrain.passable;
 
@@ -991,14 +1083,18 @@ function DungeonTableView({ onBackToMenu }) {
                       ? "rgba(255, 107, 107, 0.2)"
                       : terrain.fill;
 
-                    const stroke = isEnemy ? "rgba(255, 136, 136, 0.5)" : isActiveCell ? "rgba(76, 214, 138, 0.72)" : terrain.stroke;
-                    const strokeWidth = isActiveCell ? 2 : 1;
+                    const stroke = isEnemy
+                      ? "rgba(255, 136, 136, 0.5)"
+                      : isActiveCell
+                        ? "rgba(76, 214, 138, 0.72)"
+                        : "rgba(255, 255, 255, 0.24)";
+                    const strokeWidth = isActiveCell ? 2 : 0.9;
 
                     return (
                       <div
                         key={`${x},${y}`}
                         onClick={() => {
-                          if (isEnemy) setEnemyInspectOpen(true);
+                          if (enemyHere) setEnemyInspectId(enemyHere.id);
                         }}
                         title={isEnemy ? "Show enemy details" : undefined}
                         style={{
@@ -1039,7 +1135,7 @@ function DungeonTableView({ onBackToMenu }) {
                               opacity={0.22}
                             />
                           ) : null}
-                          {!isEnemy ? renderTerrainTexture(terrain, HEX_W, HEX_H) : null}
+                          {!isEnemy ? renderTerrainTexture(terrain, HEX_W, HEX_H, terrainTextureId) : null}
                           {isBlockedTerrain ? (
                             <>
                               <line x1={HEX_W * 0.28} y1={HEX_H * 0.22} x2={HEX_W * 0.72} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
@@ -1094,8 +1190,8 @@ function DungeonTableView({ onBackToMenu }) {
         </div>
       </div>
 
-      {enemyInspectOpen ? (
-        <div className="ttd-modal-backdrop" onClick={() => setEnemyInspectOpen(false)}>
+      {enemyInspectId ? (
+        <div className="ttd-modal-backdrop" onClick={() => setEnemyInspectId(null)}>
           <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
             {viewedEnemy ? (
               <>
