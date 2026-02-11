@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
-import { ActionType, hexNeighbors } from "../../shared/game.js";
+import { ActionType, hexNeighbors, terrainAt } from "../../shared/game.js";
 
 const theme = {
   bgA: "#0f1720",
@@ -180,7 +180,7 @@ export default function App() {
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
   const enemy = g?.enemy || null;
-  const grid = g?.grid || { w: 10, h: 7 };
+  const terrainSeed = g?.terrain?.seed ?? 0;
   const heroesPublic = g?.heroesPublic || [];
   const apRemaining = g?.apRemaining ?? 0;
   const apMax = g?.apMax ?? 2;
@@ -192,18 +192,20 @@ export default function App() {
   }
   if (enemy && enemy.hp > 0) occupied.add(`${enemy.x},${enemy.y}`);
 
-  const inBounds = (x, y) => x >= 0 && y >= 0 && x < grid.w && y < grid.h;
-
   const canSpendMove = allowed.has(ActionType.MOVE) && apRemaining > 0;
   const neighborCells =
     active && hero && hero.hp > 0 && (canSpendMove || Boolean(damageFx))
-      ? hexNeighbors(hero.x, hero.y).map((c) => ({
-          x: c.x,
-          y: c.y,
-          inBounds: inBounds(c.x, c.y),
-          canMove: canSpendMove && inBounds(c.x, c.y) && !occupied.has(`${c.x},${c.y}`)
-        }))
+      ? hexNeighbors(hero.x, hero.y).map((c) => {
+          const terrain = terrainAt(c.x, c.y, terrainSeed);
+          return {
+            x: c.x,
+            y: c.y,
+            terrain,
+            canMove: canSpendMove && terrain.passable && !occupied.has(`${c.x},${c.y}`)
+          };
+        })
       : [];
+  const heroTerrain = hero ? terrainAt(hero.x, hero.y, terrainSeed) : null;
 
   const MINI_HEX_W = 70;
   const MINI_HEX_H = 60;
@@ -383,7 +385,8 @@ export default function App() {
                   <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
                     <div style={{ position: "absolute", left: 95, top: 80, width: MINI_HEX_W, height: MINI_HEX_H, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#cfe3f7" }}>
                       <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
-                        <polygon points={MINI_HEX_POINTS} fill="#1a2430" stroke="#3a4b5e" strokeWidth="1.2" />
+                        <polygon points={MINI_HEX_POINTS} fill={heroTerrain?.fill || "#1a2430"} stroke={heroTerrain?.stroke || "#3a4b5e"} strokeWidth="1.2" />
+                        {heroTerrain ? <polygon points={MINI_HEX_POINTS} fill={heroTerrain.accent} opacity={0.2} /> : null}
                       </svg>
                       <div style={{ position: "relative" }}>YOU</div>
                     </div>
@@ -405,19 +408,21 @@ export default function App() {
                         const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
                         const canTap = c.canMove || canAttack;
                         const showDamageFx = Boolean(hasEnemy && damageFx);
+                        const terrain = c.terrain;
+                        const blockedTerrain = !terrain.passable;
 
-                        const bg = !c.inBounds
-                          ? "#141a20"
-                          : hasEnemy
-                            ? "#3a1b1f"
-                            : otherHero
-                              ? "#1b222c"
+                        const bg = hasEnemy
+                          ? "#3a1b1f"
+                          : otherHero
+                            ? "#1b222c"
+                            : blockedTerrain
+                              ? "#1a212b"
                               : c.canMove
                                 ? "#173023"
-                                : "#1a222c";
+                                : terrain.fill;
 
-                        const stroke = hasEnemy ? "#b85b5b" : c.canMove ? "#4da06a" : "#435465";
-                        const label = !c.inBounds ? "" : hasEnemy ? "EN" : otherHero ? "AL" : c.canMove ? "GO" : "";
+                        const stroke = hasEnemy ? "#b85b5b" : c.canMove ? "#4da06a" : terrain.stroke;
+                        const label = hasEnemy ? "EN" : otherHero ? "AL" : blockedTerrain ? "X" : c.canMove ? "GO" : "";
 
                         return (
                           <button
@@ -440,7 +445,7 @@ export default function App() {
                               fontSize: 12,
                               letterSpacing: 0.6,
                               color: hasEnemy ? theme.danger : c.canMove ? theme.success : theme.sub,
-                              opacity: !c.inBounds ? 0.25 : (hasEnemy || otherHero || c.canMove) ? 1 : 0.45,
+                              opacity: (hasEnemy || otherHero || c.canMove || blockedTerrain) ? 1 : 0.55,
                               cursor: canTap ? "pointer" : "default",
                               transformOrigin: "50% 50%",
                               animation: showDamageFx ? "phoneEnemyHitShake 0.35s ease-in-out" : "none"
@@ -448,6 +453,13 @@ export default function App() {
                           >
                             <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
                               <polygon points={MINI_HEX_POINTS} fill={bg} stroke={stroke} strokeWidth="1.2" />
+                              {!hasEnemy && !otherHero ? <polygon points={MINI_HEX_POINTS} fill={terrain.accent} opacity={0.18} /> : null}
+                              {blockedTerrain ? (
+                                <>
+                                  <line x1={MINI_HEX_W * 0.28} y1={MINI_HEX_H * 0.22} x2={MINI_HEX_W * 0.72} y2={MINI_HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                                  <line x1={MINI_HEX_W * 0.72} y1={MINI_HEX_H * 0.22} x2={MINI_HEX_W * 0.28} y2={MINI_HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                                </>
+                              ) : null}
                             </svg>
                             <div style={{ position: "relative" }}>{label}</div>
                             {showDamageFx ? (

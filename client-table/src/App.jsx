@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
-import { ActionType, hexWithinRange } from "../../shared/game.js";
+import { ActionType, hexWithinRange, terrainAt } from "../../shared/game.js";
 import forestTexture from "./assets/catan-textures/forest.svg";
 import pastureTexture from "./assets/catan-textures/pasture.svg";
 import wheatTexture from "./assets/catan-textures/wheat.svg";
@@ -133,6 +133,10 @@ function DungeonTableView({ onBackToMenu }) {
     sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
   }
 
+  function undoLastAction() {
+    sendTableAction(ActionType.UNDO, {}, "undo-action");
+  }
+
   function kickPlayer(playerId, playerName) {
     if (!playerId) return;
     setKickPrompt({ playerId, playerName: playerName || playerId.slice(0, 4) });
@@ -225,6 +229,8 @@ function DungeonTableView({ onBackToMenu }) {
 
   const joinUrl = sessionInfo?.joinUrl || "";
   const game = publicState?.game || null;
+  const terrainSeed = game?.terrain?.seed ?? 0;
+  const terrainTheme = game?.terrain?.theme || "frostwild-frontier";
   const heroes = game?.heroes || [];
   const enemy = game?.enemy || null;
   const log = game?.log || [];
@@ -274,6 +280,12 @@ function DungeonTableView({ onBackToMenu }) {
   }, [publicState]);
 
   const moveRange = game?.rules?.moveRange ?? 1;
+  const terrainCache = new Map();
+  const getTerrain = (x, y) => {
+    const key = `${x},${y}`;
+    if (!terrainCache.has(key)) terrainCache.set(key, terrainAt(x, y, terrainSeed));
+    return terrainCache.get(key);
+  };
   const occupied = new Set();
   for (const h of heroes) {
     if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
@@ -283,7 +295,7 @@ function DungeonTableView({ onBackToMenu }) {
   const moveOptions = new Set();
   if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
     const inBounds = () => true;
-    const isBlocked = (x, y) => occupied.has(`${x},${y}`);
+    const isBlocked = (x, y) => occupied.has(`${x},${y}`) || !getTerrain(x, y).passable;
     const opts = hexWithinRange({ x: activeHero.x, y: activeHero.y }, moveRange, inBounds, isBlocked);
     for (const k of opts) moveOptions.add(k);
   }
@@ -739,6 +751,9 @@ function DungeonTableView({ onBackToMenu }) {
                 <button className="ttd-btn" onClick={spawnEnemyForTesting}>
                   Spawn Random Monster
                 </button>
+                <button className="ttd-btn" onClick={undoLastAction} disabled={!game}>
+                  Undo Last Action
+                </button>
                 <button
                   className="ttd-btn"
                   onClick={() => {
@@ -840,7 +855,10 @@ function DungeonTableView({ onBackToMenu }) {
                 <Icon path="M3 6h18 M3 12h18 M3 18h18 M6 3v18 M12 3v18 M18 3v18" />
                 Board
               </h2>
-              <span className="ttd-pill">Live View</span>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="ttd-pill">Live View</span>
+                <span className="ttd-pill">Terrain: {terrainTheme}</span>
+              </div>
             </div>
             <div className="ttd-board-scroll" ref={boardScrollRef}>
               <button
@@ -848,28 +866,28 @@ function DungeonTableView({ onBackToMenu }) {
                 aria-label="Scroll board up"
                 onClick={() => panBoardBy(0, -(boardViewport.height || 240) * 0.5)}
               >
-                ↑
+                U
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-right"
                 aria-label="Scroll board right"
                 onClick={() => panBoardBy((boardViewport.width || 300) * 0.5, 0)}
               >
-                →
+                R
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-bottom"
                 aria-label="Scroll board down"
                 onClick={() => panBoardBy(0, (boardViewport.height || 240) * 0.5)}
               >
-                ↓
+                D
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-left"
                 aria-label="Scroll board left"
                 onClick={() => panBoardBy(-(boardViewport.width || 300) * 0.5, 0)}
               >
-                ←
+                L
               </button>
 
               <div className="ttd-board-canvas">
@@ -877,26 +895,26 @@ function DungeonTableView({ onBackToMenu }) {
                   const x = visibleMinX + xi;
                   return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
                     const y = visibleMinY + yi;
+                    const terrain = getTerrain(x, y);
                     const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
                     const isEnemy = enemy && enemy.hp > 0 && enemy.x === x && enemy.y === y;
                     const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
+                    const isBlockedTerrain = !terrain.passable;
 
                     const worldX = x * HEX_STEP_X;
                     const worldY = y * HEX_H + (x % 2 !== 0 ? HEX_H / 2 : 0);
                     const left = worldX - cameraPx.x + boardViewport.width / 2;
                     const top = worldY - cameraPx.y + boardViewport.height / 2;
 
-                    const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "EN" : "";
+                    const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "EN" : isBlockedTerrain ? "X" : "";
                     const isMoveOption = moveOptions.has(`${x},${y}`);
                     const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
 
                     const bg = isEnemy
                       ? "rgba(255, 107, 107, 0.2)"
-                      : isActiveCell
-                        ? "rgba(76, 214, 138, 0.18)"
-                        : "rgba(18, 26, 36, 0.85)";
+                      : terrain.fill;
 
-                    const stroke = isActiveCell ? "rgba(19, 92, 68, 0.7)" : "rgba(148, 166, 186, 0.2)";
+                    const stroke = isEnemy ? "rgba(255, 136, 136, 0.5)" : isActiveCell ? "rgba(76, 214, 138, 0.72)" : terrain.stroke;
                     const strokeWidth = isActiveCell ? 2 : 1;
 
                     return (
@@ -937,6 +955,19 @@ function DungeonTableView({ onBackToMenu }) {
                             stroke={stroke}
                             strokeWidth={strokeWidth}
                           />
+                          {!isEnemy ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill={terrain.accent}
+                              opacity={0.22}
+                            />
+                          ) : null}
+                          {isBlockedTerrain ? (
+                            <>
+                              <line x1={HEX_W * 0.28} y1={HEX_H * 0.22} x2={HEX_W * 0.72} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                              <line x1={HEX_W * 0.72} y1={HEX_H * 0.22} x2={HEX_W * 0.28} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                            </>
+                          ) : null}
                           {isMoveOption ? (
                             <polygon
                               points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}

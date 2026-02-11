@@ -3,9 +3,10 @@ import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
 import {
-
   ActionType,
+  findNearestPassableHex,
   hexNeighbors,
+  isTerrainPassable,
   makeInitialGameState,
   manhattan,
   nextActivePlayer,
@@ -52,6 +53,7 @@ export function setupWebSocket(server) {
   const session = makeSession();
   let tableWs = null;
   let game = null;
+  const gameHistory = [];
 
   const clients = new Map(); // ws -> { clientId, role, playerId?, seat? }
 
@@ -83,6 +85,7 @@ export function setupWebSocket(server) {
   function ensureGameFor(playerId, seatIndex0) {
     if (!game) {
       game = makeInitialGameState(playerId);
+      gameHistory.length = 0;
       resetTurnAP(game);
       game.log.push({ at: Date.now(), msg: "Encounter started." });
       game.log.push({ at: Date.now(), msg: `Turn: ${shortName(playerId)}.` });
@@ -105,6 +108,7 @@ export function setupWebSocket(server) {
       game: game
         ? {
             grid: game.grid,
+            terrain: game.terrain ? { seed: game.terrain.seed, theme: game.terrain.theme } : null,
             turn: { activePlayerId: game.turn.activePlayerId, activePlayerName: nameById.get(game.turn.activePlayerId) || null, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
             heroes: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
@@ -144,6 +148,7 @@ export function setupWebSocket(server) {
         ? {
             youAreActive: isActive,
             grid: game.grid,
+            terrain: game.terrain ? { seed: game.terrain.seed, theme: game.terrain.theme } : null,
             rules: {
               moveRange: game.rules.moveRange,
               attackRange: game.rules.attackRange,
@@ -200,6 +205,15 @@ export function setupWebSocket(server) {
     }
   }
 
+  function cloneGameState(state) {
+    return JSON.parse(JSON.stringify(state));
+  }
+
+  function pushGameHistory() {
+    if (!game) return;
+    gameHistory.push(cloneGameState(game));
+  }
+
   function requireActive(ws, id, actorPlayerId) {
     if (!game?.turn.activePlayerId) {
       reject(ws, id, "NO_ACTIVE_PLAYER", "No active player.");
@@ -223,6 +237,7 @@ export function setupWebSocket(server) {
   function enemyTakeTurn() {
     if (!game) return;
     if (game.enemy.hp <= 0) return;
+    const terrainSeed = game?.terrain?.seed ?? 0;
 
     const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h));
     if (!aliveHeroes.length) return;
@@ -237,7 +252,6 @@ export function setupWebSocket(server) {
       return;
     }
 
-    const inBounds = (x, y) => x >= 0 && y >= 0 && x < game.grid.w && y < game.grid.h;
     const occupiedByLiveHero = (x, y) => aliveHeroes.some((h) => h.x === x && h.y === y);
     const nearestHeroDistance = (pos) => {
       let best = Number.POSITIVE_INFINITY;
@@ -247,7 +261,7 @@ export function setupWebSocket(server) {
 
     const currentDist = nearestHeroDistance(game.enemy);
     const candidates = hexNeighbors(game.enemy.x, game.enemy.y)
-      .filter((p) => inBounds(p.x, p.y))
+      .filter((p) => isTerrainPassable(p.x, p.y, terrainSeed))
       .filter((p) => !occupiedByLiveHero(p.x, p.y));
 
     let bestStep = null;
@@ -281,15 +295,18 @@ export function setupWebSocket(server) {
     const toY = Number(params.toY);
     if (!Number.isFinite(toX) || !Number.isFinite(toY)) return reject(ws, id, "BAD_PARAMS", "MOVE requires toX/toY.");
 
-    const nx = clamp(Math.floor(toX), 0, game.grid.w - 1);
-    const ny = clamp(Math.floor(toY), 0, game.grid.h - 1);
+    const nx = Math.floor(toX);
+    const ny = Math.floor(toY);
+    const terrainSeed = game?.terrain?.seed ?? 0;
 
     const dist = manhattan({ x: nx, y: ny }, hero);
     if (dist > game.rules.moveRange) return reject(ws, id, "OUT_OF_RANGE", `Move too far (range ${game.rules.moveRange}).`);
+    if (!isTerrainPassable(nx, ny, terrainSeed)) return reject(ws, id, "BLOCKED", "Cell is blocked terrain.");
 
     if (nx === game.enemy.x && ny === game.enemy.y && game.enemy.hp > 0) return reject(ws, id, "BLOCKED", "Cell occupied by enemy.");
     if (cellOccupiedByOtherHero(nx, ny, actorPlayerId)) return reject(ws, id, "BLOCKED", "Cell occupied by another hero.");
 
+    pushGameHistory();
     hero.x = nx; hero.y = ny;
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} moves to (${nx},${ny}).` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
@@ -308,6 +325,7 @@ export function setupWebSocket(server) {
     const dist = manhattan(hero, game.enemy);
     if (dist > game.rules.attackRange) return reject(ws, id, "OUT_OF_RANGE", `Enemy out of range (range ${game.rules.attackRange}).`);
 
+    pushGameHistory();
     const enemyHpBefore = game.enemy.hp;
     game.enemy.hp = clamp(game.enemy.hp - game.rules.heroDamage, 0, game.enemy.maxHp);
     const dealt = enemyHpBefore - game.enemy.hp;
@@ -329,6 +347,7 @@ export function setupWebSocket(server) {
   function handleEndTurn(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
 
+    pushGameHistory();
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
     enemyTakeTurn();
 
@@ -368,21 +387,26 @@ export function setupWebSocket(server) {
   function handleSpawnEnemy(ws, id) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
 
+    const terrainSeed = game?.terrain?.seed ?? 0;
     const occupied = new Set(
       Object.values(game.heroes)
         .filter((h) => isHeroAlive(h))
         .map((h) => `${h.x},${h.y}`)
     );
-    const candidates = [];
-    for (let y = 0; y < game.grid.h; y += 1) {
-      for (let x = 0; x < game.grid.w; x += 1) {
-        if (!occupied.has(`${x},${y}`)) candidates.push({ x, y });
-      }
+    const anchor =
+      game.heroes[game.turn.activePlayerId] ||
+      Object.values(game.heroes).find((h) => isHeroAlive(h)) ||
+      { x: 0, y: 0 };
+    const target = {
+      x: anchor.x + Math.floor(Math.random() * 13) - 6,
+      y: anchor.y + Math.floor(Math.random() * 13) - 6
+    };
+    const spawn = findNearestPassableHex(target.x, target.y, terrainSeed, (x, y) => occupied.has(`${x},${y}`), 48);
+    if (occupied.has(`${spawn.x},${spawn.y}`) || !isTerrainPassable(spawn.x, spawn.y, terrainSeed)) {
+      return reject(ws, id, "NO_SPACE", "No free passable hexes to spawn enemy.");
     }
-    if (!candidates.length) return reject(ws, id, "NO_SPACE", "No free hexes to spawn enemy.");
 
-    const idx = Math.floor(Math.random() * candidates.length);
-    const spawn = candidates[idx];
+    pushGameHistory();
     game.enemy.x = spawn.x;
     game.enemy.y = spawn.y;
     game.enemy.hp = game.enemy.maxHp;
@@ -390,6 +414,15 @@ export function setupWebSocket(server) {
     game.log.push({ at: Date.now(), msg: `Enemy spawned at (${spawn.x},${spawn.y}) by table.` });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, spawn }, id));
+    emitViews();
+  }
+
+  function handleUndo(ws, id) {
+    if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
+    if (!gameHistory.length) return reject(ws, id, "NO_UNDO", "No previous actions to undo.");
+
+    game = gameHistory.pop();
+    send(ws, makeMsg(MsgType.OK, { accepted: true, undone: true, historyDepth: gameHistory.length }, id));
     emitViews();
   }
 
@@ -631,6 +664,10 @@ export function setupWebSocket(server) {
         const action = msg.payload?.action;
         if (action === ActionType.SPAWN_ENEMY) {
           handleSpawnEnemy(ws, msg.id);
+          return;
+        }
+        if (action === ActionType.UNDO) {
+          handleUndo(ws, msg.id);
           return;
         }
         if (action === ActionType.KICK_PLAYER) {
