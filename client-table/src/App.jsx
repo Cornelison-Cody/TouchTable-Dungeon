@@ -78,7 +78,7 @@ function DungeonTableView({ onBackToMenu }) {
   const prevEnemyHpRef = useRef(null);
   const audioCtxRef = useRef(null);
   const boardScrollRef = useRef(null);
-  const cameraCenteredRef = useRef(false);
+  const wasTurnStartRef = useRef(false);
 
   useEffect(() => {
     setError(null);
@@ -318,17 +318,26 @@ function DungeonTableView({ onBackToMenu }) {
     return () => window.removeEventListener("resize", updateViewport);
   }, []);
 
-  useEffect(() => {
-    if (cameraCenteredRef.current) return;
-    const focus = activeHero || heroes[0] || enemy;
-    if (!focus) return;
-
-    cameraCenteredRef.current = true;
+  function centerCameraOnUnit(unit) {
+    if (!unit) return;
     setCameraPx({
-      x: focus.x * HEX_STEP_X,
-      y: focus.y * HEX_H + (focus.x % 2 !== 0 ? HEX_H / 2 : 0)
+      x: unit.x * HEX_STEP_X,
+      y: unit.y * HEX_H + (unit.x % 2 !== 0 ? HEX_H / 2 : 0)
     });
-  }, [activeHero, heroes, enemy, HEX_H, HEX_STEP_X]);
+  }
+
+  useEffect(() => {
+    const isTurnStart = apMax > 0 && apRemaining === apMax;
+    if (isTurnStart && !wasTurnStartRef.current) {
+      const focus =
+        (activeHero && activeHero.hp > 0 ? activeHero : null) ||
+        (enemy && enemy.hp > 0 ? enemy : null) ||
+        heroes.find((h) => h.hp > 0) ||
+        null;
+      centerCameraOnUnit(focus);
+    }
+    wasTurnStartRef.current = isTurnStart;
+  }, [activeHero, heroes, enemy, apRemaining, apMax, HEX_H, HEX_STEP_X]);
 
   const viewportW = boardViewport.width || 1;
   const viewportH = boardViewport.height || 1;
@@ -368,6 +377,74 @@ function DungeonTableView({ onBackToMenu }) {
       hp: `${enemyUnit.hp}/${enemyUnit.maxHp}`,
       attackPower: enemyUnit.attackPower ?? game?.rules?.enemyDamage ?? "-"
     };
+  }
+
+  function renderTerrainTexture(terrain, width, height) {
+    if (!terrain) return null;
+
+    if (terrain.id === "grassland" || terrain.id === "high_grass") {
+      return (
+        <g stroke="rgba(214, 239, 180, 0.3)" strokeWidth="1.5" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.28} ${height * 0.84} L${width * 0.34} ${height * 0.48}`} />
+          <path d={`M${width * 0.42} ${height * 0.9} L${width * 0.48} ${height * 0.42}`} />
+          <path d={`M${width * 0.58} ${height * 0.9} L${width * 0.62} ${height * 0.5}`} />
+          <path d={`M${width * 0.7} ${height * 0.82} L${width * 0.74} ${height * 0.52}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "mudflat") {
+      return (
+        <g stroke="rgba(187, 157, 121, 0.34)" strokeWidth="1.6" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.24} ${height * 0.38} Q${width * 0.42} ${height * 0.3} ${width * 0.66} ${height * 0.36}`} />
+          <path d={`M${width * 0.28} ${height * 0.58} Q${width * 0.5} ${height * 0.5} ${width * 0.72} ${height * 0.6}`} />
+          <path d={`M${width * 0.3} ${height * 0.76} Q${width * 0.46} ${height * 0.68} ${width * 0.64} ${height * 0.74}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "frozen_scree") {
+      return (
+        <g fill="none" stroke="rgba(217, 230, 244, 0.35)" strokeWidth="1.4" strokeLinecap="round">
+          <path d={`M${width * 0.26} ${height * 0.32} L${width * 0.36} ${height * 0.24} L${width * 0.42} ${height * 0.34}`} />
+          <path d={`M${width * 0.52} ${height * 0.3} L${width * 0.64} ${height * 0.2} L${width * 0.7} ${height * 0.32}`} />
+          <path d={`M${width * 0.34} ${height * 0.66} L${width * 0.46} ${height * 0.56} L${width * 0.54} ${height * 0.7}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "thornbrush") {
+      return (
+        <g stroke="rgba(205, 145, 104, 0.42)" strokeWidth="1.6" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.24} ${height * 0.74} L${width * 0.42} ${height * 0.32}`} />
+          <path d={`M${width * 0.36} ${height * 0.78} L${width * 0.52} ${height * 0.4}`} />
+          <path d={`M${width * 0.56} ${height * 0.76} L${width * 0.72} ${height * 0.34}`} />
+          <path d={`M${width * 0.3} ${height * 0.56} L${width * 0.7} ${height * 0.6}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "shallow_water" || terrain.id === "deep_water") {
+      return (
+        <g stroke="rgba(177, 220, 248, 0.36)" strokeWidth="1.5" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.2} ${height * 0.36} Q${width * 0.3} ${height * 0.28} ${width * 0.4} ${height * 0.36} T${width * 0.6} ${height * 0.36} T${width * 0.8} ${height * 0.36}`} />
+          <path d={`M${width * 0.18} ${height * 0.56} Q${width * 0.28} ${height * 0.48} ${width * 0.38} ${height * 0.56} T${width * 0.58} ${height * 0.56} T${width * 0.78} ${height * 0.56}`} />
+          <path d={`M${width * 0.24} ${height * 0.74} Q${width * 0.34} ${height * 0.66} ${width * 0.44} ${height * 0.74} T${width * 0.64} ${height * 0.74}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "boulder") {
+      return (
+        <g fill="none" stroke="rgba(215, 225, 236, 0.3)" strokeWidth="1.4">
+          <ellipse cx={width * 0.38} cy={height * 0.52} rx={width * 0.11} ry={height * 0.14} />
+          <ellipse cx={width * 0.58} cy={height * 0.44} rx={width * 0.1} ry={height * 0.13} />
+          <ellipse cx={width * 0.52} cy={height * 0.66} rx={width * 0.12} ry={height * 0.1} />
+        </g>
+      );
+    }
+
+    return null;
   }
 
   const viewedEnemy = enemyProfile(enemy);
@@ -866,28 +943,28 @@ function DungeonTableView({ onBackToMenu }) {
                 aria-label="Scroll board up"
                 onClick={() => panBoardBy(0, -(boardViewport.height || 240) * 0.5)}
               >
-                U
+                N
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-right"
                 aria-label="Scroll board right"
                 onClick={() => panBoardBy((boardViewport.width || 300) * 0.5, 0)}
               >
-                R
+                E
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-bottom"
                 aria-label="Scroll board down"
                 onClick={() => panBoardBy(0, (boardViewport.height || 240) * 0.5)}
               >
-                D
+                S
               </button>
               <button
                 className="ttd-pan-btn ttd-pan-left"
                 aria-label="Scroll board left"
                 onClick={() => panBoardBy(-(boardViewport.width || 300) * 0.5, 0)}
               >
-                L
+                W
               </button>
 
               <div className="ttd-board-canvas">
@@ -962,6 +1039,7 @@ function DungeonTableView({ onBackToMenu }) {
                               opacity={0.22}
                             />
                           ) : null}
+                          {!isEnemy ? renderTerrainTexture(terrain, HEX_W, HEX_H) : null}
                           {isBlockedTerrain ? (
                             <>
                               <line x1={HEX_W * 0.28} y1={HEX_H * 0.22} x2={HEX_W * 0.72} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
