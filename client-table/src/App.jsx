@@ -69,6 +69,7 @@ function DungeonTableView({ onBackToMenu }) {
   const [publicState, setPublicState] = useState(null);
   const [error, setError] = useState(null);
   const [tableHitFx, setTableHitFx] = useState(null);
+  const [tableHeroHitFx, setTableHeroHitFx] = useState(null);
   const [audioReady, setAudioReady] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [kickPrompt, setKickPrompt] = useState(null);
@@ -78,6 +79,7 @@ function DungeonTableView({ onBackToMenu }) {
 
   const wsRef = useRef(null);
   const prevEnemyHpRef = useRef({});
+  const seenEnemyDamageAtRef = useRef(0);
   const audioCtxRef = useRef(null);
   const boardScrollRef = useRef(null);
   const wasTurnStartRef = useRef(false);
@@ -305,6 +307,33 @@ function DungeonTableView({ onBackToMenu }) {
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
+  }, [publicState]);
+
+  useEffect(() => {
+    const incoming = publicState?.game?.lastEnemyDamage;
+    if (!incoming?.at || incoming.at <= seenEnemyDamageAtRef.current) return;
+    seenEnemyDamageAtRef.current = incoming.at;
+
+    const targetHero =
+      (publicState?.game?.heroes || []).find((h) => h.ownerPlayerId === incoming.targetPlayerId) || null;
+    if (!targetHero) return;
+
+    const fx = {
+      id: incoming.at,
+      targetPlayerId: incoming.targetPlayerId,
+      x: targetHero.x,
+      y: targetHero.y,
+      amount: incoming.amount,
+      heroHp: incoming.heroHp,
+      heroMaxHp: incoming.heroMaxHp
+    };
+    setTableHeroHitFx(fx);
+    playHitSound();
+
+    const t = setTimeout(() => {
+      setTableHeroHitFx((curr) => (curr && curr.id === fx.id ? null : curr));
+    }, 1200);
+    return () => clearTimeout(t);
   }, [publicState]);
 
   const moveRange = game?.rules?.moveRange ?? 1;
@@ -1092,6 +1121,8 @@ function DungeonTableView({ onBackToMenu }) {
                     const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "EN" : isBlockedTerrain ? "X" : "";
                     const isMoveOption = moveOptions.has(`${x},${y}`);
                     const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
+                    const isHeroHitCell =
+                      tableHeroHitFx && heroHere && tableHeroHitFx.targetPlayerId === heroHere.ownerPlayerId;
 
                     const bg = isEnemy
                       ? "rgba(255, 107, 107, 0.2)"
@@ -1173,9 +1204,51 @@ function DungeonTableView({ onBackToMenu }) {
                               style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.65s ease-out forwards" }}
                             />
                           ) : null}
+                          {isHeroHitCell ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill="none"
+                              stroke="rgba(255, 170, 112, 0.95)"
+                              strokeWidth="4"
+                              style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.8s ease-out forwards" }}
+                            />
+                          ) : null}
                         </svg>
                         <div style={{ position: "relative", textAlign: "center", lineHeight: 1.05 }}>
                           <div>{label}</div>
+                          {isEnemy ? (
+                            <div style={{ marginTop: 3, minWidth: 42 }}>
+                              <div
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 900,
+                                  color: "#ffd7d7",
+                                  textShadow: "0 1px 2px rgba(0,0,0,0.55)"
+                                }}
+                              >
+                                HP {enemyHere.hp}/{enemyHere.maxHp}
+                              </div>
+                              <div
+                                style={{
+                                  marginTop: 2,
+                                  width: 42,
+                                  height: 5,
+                                  borderRadius: 999,
+                                  background: "rgba(18, 24, 32, 0.85)",
+                                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                                  overflow: "hidden"
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.max(0, Math.min(100, (enemyHere.hp / Math.max(1, enemyHere.maxHp)) * 100))}%`,
+                                    height: "100%",
+                                    background: "linear-gradient(90deg, #ff7f7f, #ff4f4f)"
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                         {isHitCell ? (
                           <div
@@ -1192,6 +1265,23 @@ function DungeonTableView({ onBackToMenu }) {
                             }}
                           >
                             -{tableHitFx.amount}
+                          </div>
+                        ) : null}
+                        {isHeroHitCell ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: -32,
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: "rgba(18, 24, 32, 0.95)",
+                              border: "1px solid rgba(255, 170, 112, 0.5)",
+                              color: "#ffbd8f",
+                              fontWeight: 900,
+                              animation: "tvHitFloat 1.1s ease-out forwards"
+                            }}
+                          >
+                            -{tableHeroHitFx.amount} HP ({tableHeroHitFx.heroHp}/{tableHeroHitFx.heroMaxHp})
                           </div>
                         ) : null}
                       </div>

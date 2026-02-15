@@ -84,12 +84,14 @@ export default function App() {
   const [privateState, setPrivateState] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [damageFx, setDamageFx] = useState(null);
+  const [incomingDamageFx, setIncomingDamageFx] = useState(null);
 
   const resumeToken = useMemo(() => localStorage.getItem("tt_resume_token") || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
 
   const wsRef = useRef(null);
   const seenDamageAtRef = useRef(0);
+  const seenEnemyDamageAtRef = useRef(0);
 
   useEffect(() => {
     setError(null);
@@ -185,7 +187,7 @@ export default function App() {
   const terrainSeed = g?.terrain?.seed ?? 0;
   const heroesPublic = g?.heroesPublic || [];
   const apRemaining = g?.apRemaining ?? 0;
-  const apMax = g?.apMax ?? 2;
+  const apMax = g?.apMax ?? 4;
   const allowed = new Set(g?.allowedActions || []);
 
   const occupied = new Set();
@@ -231,6 +233,23 @@ export default function App() {
     return () => clearTimeout(t);
   }, [privateState]);
 
+  useEffect(() => {
+    const incoming = privateState?.game?.lastEnemyDamage;
+    if (!incoming?.at || incoming.at <= seenEnemyDamageAtRef.current) return;
+    seenEnemyDamageAtRef.current = incoming.at;
+    const fx = {
+      id: incoming.at,
+      amount: incoming.amount,
+      heroHp: incoming.heroHp,
+      heroMaxHp: incoming.heroMaxHp
+    };
+    setIncomingDamageFx(fx);
+    const t = setTimeout(() => {
+      setIncomingDamageFx((curr) => (curr && curr.id === fx.id ? null : curr));
+    }, 1300);
+    return () => clearTimeout(t);
+  }, [privateState]);
+
   return (
     <div style={shellStyle}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
@@ -246,6 +265,11 @@ export default function App() {
             0% { transform: translate(-50%, 0) scale(0.9); opacity: 0; }
             18% { transform: translate(-50%, -6px) scale(1); opacity: 1; }
             100% { transform: translate(-50%, -26px) scale(1); opacity: 0; }
+          }
+          @keyframes phoneHeroHitFlash {
+            0% { opacity: 0; transform: translateY(4px); }
+            20% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-8px); }
           }
         `}</style>
         <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #1b2430, #141c26)" }}>
@@ -366,6 +390,23 @@ export default function App() {
                   value={`${apRemaining}/${apMax}`}
                 />
               </div>
+              {incomingDamageFx ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    borderRadius: 10,
+                    border: "1px solid rgba(255, 107, 107, 0.45)",
+                    background: "rgba(60, 24, 28, 0.85)",
+                    color: "#ffd3d3",
+                    fontWeight: 800,
+                    padding: "8px 10px",
+                    textAlign: "center",
+                    animation: "phoneHeroHitFlash 1.3s ease-out forwards"
+                  }}
+                >
+                  You were hit for {incomingDamageFx.amount}. HP {incomingDamageFx.heroHp}/{incomingDamageFx.heroMaxHp}
+                </div>
+              ) : null}
             </div>
 
             <div style={cardStyle}>
@@ -374,12 +415,40 @@ export default function App() {
                 Move and Attack
               </div>
 
+              {livingEnemies.length ? (
+                <div style={{ marginBottom: 10, display: "grid", gap: 6 }}>
+                  {livingEnemies.map((enemyUnit) => (
+                    <div
+                      key={enemyUnit.id}
+                      style={{
+                        border: `1px solid ${theme.border}`,
+                        borderRadius: 10,
+                        background: "rgba(46, 24, 30, 0.7)",
+                        padding: "6px 8px"
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd7d7" }}>{enemyUnit.name || "Enemy"}</div>
+                        <div style={{ ...mono, fontSize: 12, color: "#ffb7b7", fontWeight: 800 }}>
+                          HP {enemyUnit.hp}/{enemyUnit.maxHp}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 5, height: 6, borderRadius: 999, background: "rgba(15, 20, 27, 0.95)", overflow: "hidden", border: "1px solid rgba(255,255,255,0.16)" }}>
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${Math.max(0, Math.min(100, (enemyUnit.hp / Math.max(1, enemyUnit.maxHp)) * 100))}%`,
+                            background: "linear-gradient(90deg, #ff8b8b, #ff4f4f)"
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               {!active || !hero ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
-              ) : scenario?.status === "victory" ? (
-                <p style={{ marginBottom: 0, color: theme.success, fontWeight: 800 }}>
-                  Victory! Scenario complete ({scenario?.defeatedCount || 0}/{scenario?.objective?.targetCount || 0} monsters defeated).
-                </p>
               ) : (!allowed.has(ActionType.MOVE) || apRemaining <= 0) && !damageFx ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
               ) : (
@@ -468,7 +537,14 @@ export default function App() {
                                 </>
                               ) : null}
                             </svg>
-                            <div style={{ position: "relative" }}>{label}</div>
+                            <div style={{ position: "relative", textAlign: "center", lineHeight: 1.05 }}>
+                              <div>{label}</div>
+                              {hasEnemy ? (
+                                <div style={{ marginTop: 2, fontSize: 9, fontWeight: 900, color: "#ffc9c9", letterSpacing: 0.2 }}>
+                                  {enemyHere.hp}/{enemyHere.maxHp}
+                                </div>
+                              ) : null}
+                            </div>
                             {showDamageFx ? (
                               <div
                                 style={{

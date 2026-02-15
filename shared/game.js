@@ -281,12 +281,12 @@ export function firstLivingEnemy(game) {
   return livingEnemies(game)[0] || null;
 }
 
-function spawnScenarioOneEnemies(terrainSeed, occupiedKeys) {
+function spawnScenarioOneEnemies(terrainSeed, occupiedKeys, anchor = { x: 1, y: 1 }) {
   const desired = [
-    { x: 7, y: 4 },
-    { x: 8, y: 5 },
-    { x: 6, y: 4 },
-    { x: 7, y: 6 }
+    { x: anchor.x + 8, y: anchor.y + 0 },
+    { x: anchor.x - 8, y: anchor.y + 2 },
+    { x: anchor.x + 3, y: anchor.y + 8 },
+    { x: anchor.x - 2, y: anchor.y - 8 }
   ];
 
   return desired.map((p, idx) => {
@@ -311,7 +311,7 @@ export function makeInitialGameState(firstPlayerId) {
   const occupied = new Set();
   const heroSpawn = findNearestPassableHex(1, 1, terrainSeed, (x, y) => occupied.has(`${x},${y}`), 24);
   occupied.add(`${heroSpawn.x},${heroSpawn.y}`);
-  const enemies = spawnScenarioOneEnemies(terrainSeed, occupied);
+  const enemies = spawnScenarioOneEnemies(terrainSeed, occupied, heroSpawn);
 
   return {
     v: 1,
@@ -324,8 +324,8 @@ export function makeInitialGameState(firstPlayerId) {
       id: "scenario-1",
       title: "Scenario 1: Rift Breach",
       objective: {
-        type: "defeat",
-        targetCount: 2
+        type: "endless",
+        targetCount: null
       },
       defeatedCount: 0,
       status: "active"
@@ -334,8 +334,8 @@ export function makeInitialGameState(firstPlayerId) {
       order: [firstPlayerId],
       activeIndex: 0,
       activePlayerId: firstPlayerId,
-      apMax: 2,
-      apRemaining: 2
+      apMax: 4,
+      apRemaining: 4
     },
     heroes: {
       [firstPlayerId]: {
@@ -353,7 +353,7 @@ export function makeInitialGameState(firstPlayerId) {
       attackRange: 1,
       heroDamage: 2,
       enemyDamage: 1,
-      actionPointsPerTurn: 2
+      actionPointsPerTurn: 4
     },
     log: []
   };

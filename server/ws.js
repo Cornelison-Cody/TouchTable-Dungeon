@@ -71,11 +71,17 @@ export function setupWebSocket(server) {
       game.scenario = {
         id: "scenario-1",
         title: "Scenario 1: Rift Breach",
-        objective: { type: "defeat", targetCount: 2 },
+        objective: { type: "endless", targetCount: null },
         defeatedCount: 0,
         status: "active"
       };
     }
+    if (!game.scenario.objective || game.scenario.objective.type !== "endless") {
+      game.scenario.objective = { type: "endless", targetCount: null };
+    }
+    if (game.scenario.status !== "active") game.scenario.status = "active";
+    game.rules = game.rules || {};
+    if ((game.rules.actionPointsPerTurn ?? 0) < 4) game.rules.actionPointsPerTurn = 4;
   }
 
   function saveCampaignSnapshot() {
@@ -196,6 +202,16 @@ export function setupWebSocket(server) {
                 }
               : null,
             rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
+            lastEnemyDamage: game.lastEnemyDamage
+              ? {
+                  enemyId: game.lastEnemyDamage.enemyId,
+                  targetPlayerId: game.lastEnemyDamage.targetPlayerId,
+                  amount: game.lastEnemyDamage.amount,
+                  heroHp: game.lastEnemyDamage.heroHp,
+                  heroMaxHp: game.lastEnemyDamage.heroMaxHp,
+                  at: game.lastEnemyDamage.at
+                }
+              : null,
             log: game.log.slice(-10)
           }
         : null
@@ -209,8 +225,6 @@ export function setupWebSocket(server) {
     const hero = game?.heroes?.[playerId] ?? null;
     const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
     const primaryEnemy = game ? firstLivingEnemy(game) : null;
-    const scenarioWon = game?.scenario?.status === "victory";
-
     return {
       sessionId: session.sessionId,
       player: seat ? { playerId, seat: seat.seat, playerName: seat.playerName } : null,
@@ -286,10 +300,18 @@ export function setupWebSocket(server) {
                     at: game.lastHeroDamage.at
                   }
                 : null,
+            lastEnemyDamage:
+              game.lastEnemyDamage && game.lastEnemyDamage.targetPlayerId === playerId
+                ? {
+                    amount: game.lastEnemyDamage.amount,
+                    enemyId: game.lastEnemyDamage.enemyId,
+                    heroHp: game.lastEnemyDamage.heroHp,
+                    heroMaxHp: game.lastEnemyDamage.heroMaxHp,
+                    at: game.lastEnemyDamage.at
+                  }
+                : null,
             allowedActions:
-              scenarioWon
-                ? []
-                : isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
+              isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
                 ? [ActionType.MOVE, ActionType.ATTACK, ActionType.END_TURN]
                 : isActive && hero && hero.hp > 0
                   ? [ActionType.END_TURN]
@@ -349,56 +371,48 @@ export function setupWebSocket(server) {
 
   function markEnemyDefeated(enemyUnit) {
     if (!game || !enemyUnit) return;
-    const objectiveTarget = game?.scenario?.objective?.targetCount ?? 2;
     game.scenario.defeatedCount = (game.scenario.defeatedCount ?? 0) + 1;
-    game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount}/${objectiveTarget}).` });
-
-    if (game.scenario.status !== "victory" && game.scenario.defeatedCount >= objectiveTarget) {
-      game.scenario.status = "victory";
-      game.log.push({ at: Date.now(), msg: "Scenario complete: Victory!" });
-      campaign.progression = campaign.progression || {};
-      campaign.progression.victories = (campaign.progression.victories || 0) + 1;
-      const completed = Array.isArray(campaign.progression.completedScenarioIds) ? campaign.progression.completedScenarioIds : [];
-      if (!completed.includes(game.scenario.id)) completed.push(game.scenario.id);
-      campaign.progression.completedScenarioIds = completed;
-      for (const pid of game.turn.order || []) {
-        const player = (campaign.players || []).find((p) => p.id === pid);
-        if (!player) continue;
-        player.stats = player.stats || { victories: 0, scenariosCompleted: 0 };
-        player.stats.victories = (player.stats.victories || 0) + 1;
-        player.stats.scenariosCompleted = (player.stats.scenariosCompleted || 0) + 1;
-      }
-    }
+    game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total).` });
   }
 
   function enemyTakeTurn() {
     if (!game) return;
-    if (game.scenario?.status === "victory") return;
     const terrainSeed = game?.terrain?.seed ?? 0;
+    const enemyAwarenessRange = 8;
 
     const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h));
     if (!aliveHeroes.length) return;
 
     for (const enemyUnit of livingEnemies(game)) {
+      const nearestHeroDistance = (pos) => {
+        let best = Number.POSITIVE_INFINITY;
+        for (const h of aliveHeroes) best = Math.min(best, manhattan(pos, h));
+        return best;
+      };
+      const currentDist = nearestHeroDistance(enemyUnit);
+      if (currentDist > enemyAwarenessRange) continue;
+
       const inRange = aliveHeroes.filter((h) => manhattan(h, enemyUnit) <= game.rules.attackRange);
       if (inRange.length) {
         const target = [...inRange].sort((a, b) => a.hp - b.hp || manhattan(a, enemyUnit) - manhattan(b, enemyUnit))[0];
+        const damageAt = Date.now();
         target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
-        game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Enemy"} hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
-        if (target.hp <= 0) game.log.push({ at: Date.now(), msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
+        game.lastEnemyDamage = {
+          enemyId: enemyUnit.id,
+          targetPlayerId: target.ownerPlayerId,
+          amount: game.rules.enemyDamage,
+          heroHp: target.hp,
+          heroMaxHp: target.maxHp,
+          at: damageAt
+        };
+        game.log.push({ at: damageAt, msg: `${enemyUnit.name || "Enemy"} hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
+        if (target.hp <= 0) game.log.push({ at: damageAt, msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
         continue;
       }
 
       const occupiedByLiveHero = (x, y) => aliveHeroes.some((h) => h.x === x && h.y === y);
       const occupiedByOtherEnemy = (x, y) =>
         (game.enemies || []).some((e) => e.id !== enemyUnit.id && e.hp > 0 && e.x === x && e.y === y);
-      const nearestHeroDistance = (pos) => {
-        let best = Number.POSITIVE_INFINITY;
-        for (const h of aliveHeroes) best = Math.min(best, manhattan(pos, h));
-        return best;
-      };
-
-      const currentDist = nearestHeroDistance(enemyUnit);
       const candidates = hexNeighbors(enemyUnit.x, enemyUnit.y)
         .filter((p) => isTerrainPassable(p.x, p.y, terrainSeed))
         .filter((p) => !occupiedByLiveHero(p.x, p.y))
@@ -426,7 +440,6 @@ export function setupWebSocket(server) {
 
   function handleMove(ws, id, actorPlayerId, params) {
     if (!requireActive(ws, id, actorPlayerId)) return;
-    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
     // Action points
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
@@ -457,7 +470,6 @@ export function setupWebSocket(server) {
 
   function handleAttack(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
-    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
     // Action points
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
@@ -491,7 +503,6 @@ export function setupWebSocket(server) {
 
   function handleEndTurn(ws, id, actorPlayerId) {
     if (!requireActive(ws, id, actorPlayerId)) return;
-    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
 
     pushGameHistory();
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
@@ -554,7 +565,6 @@ export function setupWebSocket(server) {
 
   function handleSpawnEnemy(ws, id) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
-    if (game.scenario?.status === "victory") return reject(ws, id, "SCENARIO_COMPLETE", "Scenario already won.");
 
     const terrainSeed = game?.terrain?.seed ?? 0;
     const occupied = new Set(
