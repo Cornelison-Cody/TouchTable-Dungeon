@@ -171,11 +171,11 @@ export default function App() {
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.MOVE, params: { toX, toY } }, "move")));
   }
 
-  function sendAction(action) {
+  function sendAction(action, params = {}) {
     setError(null);
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
-    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params: {} }, "act")));
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params }, "act")));
   }
 
   const g = privateState?.game || null;
@@ -183,12 +183,25 @@ export default function App() {
   const hero = g?.hero || null;
   const enemies = g?.enemies || (g?.enemy ? [g.enemy] : []);
   const livingEnemies = enemies.filter((e) => e && e.hp > 0);
-  const scenario = g?.scenario || null;
   const terrainSeed = g?.terrain?.seed ?? 0;
   const heroesPublic = g?.heroesPublic || [];
   const apRemaining = g?.apRemaining ?? 0;
   const apMax = g?.apMax ?? 4;
   const allowed = new Set(g?.allowedActions || []);
+  const rpg = g?.rpg || null;
+  const inventory = rpg?.inventory || {};
+  const spellName = rpg?.spell?.name || "Arc Bolt";
+  const weaponName = rpg?.weapon?.name || "Weapon";
+  const canCastSpell = allowed.has(ActionType.CAST_SPELL);
+  const canCraftPotion = allowed.has(ActionType.CRAFT_ITEM);
+  const canUsePotion = allowed.has(ActionType.USE_ITEM);
+  const noActionOptions =
+    apRemaining <= 0 &&
+    !allowed.has(ActionType.MOVE) &&
+    !allowed.has(ActionType.CAST_SPELL) &&
+    !allowed.has(ActionType.CRAFT_ITEM) &&
+    !allowed.has(ActionType.USE_ITEM);
+  const lastLoot = g?.lastLoot || null;
 
   const occupied = new Set();
   for (const h of heroesPublic) {
@@ -389,7 +402,90 @@ export default function App() {
                   label="Action"
                   value={`${apRemaining}/${apMax}`}
                 />
+                <StatTile
+                  icon={<Icon path="M12 3l3 6 6 .9-4.4 4.3 1 6.1L12 17l-5.6 3.3 1-6.1L3 9.9l6-.9z" stroke={theme.brandDark} />}
+                  label="Level"
+                  value={rpg ? `Lv ${rpg.level}` : "-"}
+                />
+                <StatTile
+                  icon={<Icon path="M3 12h18 M12 3v18" stroke="#f0c86a" />}
+                  label="Gold"
+                  value={rpg ? `${rpg.gold}` : "-"}
+                  tone="success"
+                />
               </div>
+              {rpg ? (
+                <div style={{ marginTop: 8, color: theme.sub, fontSize: 12 }}>
+                  XP: <span style={{ ...mono, color: theme.text }}>{rpg.xp}/{rpg.xpToNext}</span> | Weapon:{" "}
+                  <span style={{ color: theme.text, fontWeight: 700 }}>{weaponName}</span>
+                </div>
+              ) : null}
+              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
+                  Herb: <strong style={{ color: theme.text }}>{inventory.herb || 0}</strong>
+                </span>
+                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
+                  Fang: <strong style={{ color: theme.text }}>{inventory.fang || 0}</strong>
+                </span>
+                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
+                  Essence: <strong style={{ color: theme.text }}>{inventory.essence || 0}</strong>
+                </span>
+                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
+                  Potion: <strong style={{ color: theme.text }}>{inventory.potion || 0}</strong>
+                </span>
+              </div>
+              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                <button
+                  disabled={!active || !canCastSpell}
+                  onClick={() => sendAction(ActionType.CAST_SPELL)}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: !active || !canCastSpell ? "#2a3541" : "#3b6eb2",
+                    color: !active || !canCastSpell ? "#9aa8b6" : "#eef6ff",
+                    fontWeight: 800,
+                    cursor: !active || !canCastSpell ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {spellName}
+                </button>
+                <button
+                  disabled={!active || !canCraftPotion}
+                  onClick={() => sendAction(ActionType.CRAFT_ITEM, { recipeId: "potion_minor" })}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: !active || !canCraftPotion ? "#2a3541" : "#2f7e62",
+                    color: !active || !canCraftPotion ? "#9aa8b6" : "#e8fff5",
+                    fontWeight: 800,
+                    cursor: !active || !canCraftPotion ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Craft Potion
+                </button>
+                <button
+                  disabled={!active || !canUsePotion}
+                  onClick={() => sendAction(ActionType.USE_ITEM, { itemId: "potion" })}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: !active || !canUsePotion ? "#2a3541" : "#a05b2a",
+                    color: !active || !canUsePotion ? "#9aa8b6" : "#fff1e8",
+                    fontWeight: 800,
+                    cursor: !active || !canUsePotion ? "not-allowed" : "pointer"
+                  }}
+                >
+                  Drink Potion
+                </button>
+              </div>
+              {lastLoot ? (
+                <div style={{ marginTop: 10, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(24, 34, 46, 0.92)", color: theme.sub, fontSize: 12 }}>
+                  Looted from {lastLoot.enemyName}: +{lastLoot.xp} XP, +{lastLoot.gold}g
+                </div>
+              ) : null}
               {incomingDamageFx ? (
                 <div
                   style={{
@@ -412,7 +508,7 @@ export default function App() {
             <div style={cardStyle}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontWeight: 700 }}>
                 <Icon path="M4 20l8-16 8 16" stroke={theme.brandDark} />
-                Move and Attack
+                Move, Attack, and Skills
               </div>
 
               {livingEnemies.length ? (
@@ -428,7 +524,9 @@ export default function App() {
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd7d7" }}>{enemyUnit.name || "Enemy"}</div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd7d7" }}>
+                          {enemyUnit.name || "Enemy"} {enemyUnit.level ? `(Lv ${enemyUnit.level})` : ""}
+                        </div>
                         <div style={{ ...mono, fontSize: 12, color: "#ffb7b7", fontWeight: 800 }}>
                           HP {enemyUnit.hp}/{enemyUnit.maxHp}
                         </div>
@@ -449,12 +547,12 @@ export default function App() {
 
               {!active || !hero ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
-              ) : (!allowed.has(ActionType.MOVE) || apRemaining <= 0) && !damageFx ? (
+              ) : noActionOptions && !damageFx ? (
                 <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
               ) : (
                 <>
                   <div style={{ ...mono, color: theme.sub, marginBottom: 10, fontSize: 12 }}>
-                    Tap green to move. Tap red enemy to attack.
+                    Tap green to move. Tap red enemy to attack with your weapon.
                   </div>
 
                   <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>

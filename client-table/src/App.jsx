@@ -480,6 +480,8 @@ function DungeonTableView({ onBackToMenu }) {
     if (!enemyUnit) return null;
     return {
       name: enemyUnit.name || "Unknown Hostile",
+      level: enemyUnit.level || 1,
+      tier: enemyUnit.tier || "common",
       art: enemyUnit.art || "👹",
       flavor: enemyUnit.flavor || "A dangerous foe with unstable behavior.",
       hp: `${enemyUnit.hp}/${enemyUnit.maxHp}`,
@@ -1118,7 +1120,7 @@ function DungeonTableView({ onBackToMenu }) {
                     const left = worldX - cameraPx.x + boardViewport.width / 2;
                     const top = worldY - cameraPx.y + boardViewport.height / 2;
 
-                    const label = heroHere ? heroGlyph(heroHere) : isEnemy ? "EN" : isBlockedTerrain ? "X" : "";
+                    const label = heroHere ? heroGlyph(heroHere) : isEnemy ? `E${enemyHere.level || 1}` : isBlockedTerrain ? "X" : "";
                     const isMoveOption = moveOptions.has(`${x},${y}`);
                     const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
                     const isHeroHitCell =
@@ -1226,7 +1228,7 @@ function DungeonTableView({ onBackToMenu }) {
                                   textShadow: "0 1px 2px rgba(0,0,0,0.55)"
                                 }}
                               >
-                                HP {enemyHere.hp}/{enemyHere.maxHp}
+                                L{enemyHere.level || 1} HP {enemyHere.hp}/{enemyHere.maxHp}
                               </div>
                               <div
                                 style={{
@@ -1301,6 +1303,9 @@ function DungeonTableView({ onBackToMenu }) {
               <>
                 <div className="ttd-enemy-art">{viewedEnemy.art}</div>
                 <h3 style={{ marginTop: 0, marginBottom: 8 }}>{viewedEnemy.name}</h3>
+                <div style={{ marginBottom: 8, color: "var(--ttd-sub)", fontWeight: 700 }}>
+                  Level {viewedEnemy.level} | Tier: {viewedEnemy.tier}
+                </div>
                 <div className="ttd-stat-grid" style={{ marginBottom: 10 }}>
                   <div className="ttd-stat">
                     <label>HP</label>

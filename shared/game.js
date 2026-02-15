@@ -1,7 +1,10 @@
 export const ActionType = Object.freeze({
   MOVE: "MOVE",
   ATTACK: "ATTACK",
+  CAST_SPELL: "CAST_SPELL",
   END_TURN: "END_TURN",
+  USE_ITEM: "USE_ITEM",
+  CRAFT_ITEM: "CRAFT_ITEM",
   SPAWN_ENEMY: "SPAWN_ENEMY",
   KICK_PLAYER: "KICK_PLAYER",
   UNDO: "UNDO",
@@ -288,20 +291,92 @@ function spawnScenarioOneEnemies(terrainSeed, occupiedKeys, anchor = { x: 1, y: 
     { x: anchor.x + 3, y: anchor.y + 8 },
     { x: anchor.x - 2, y: anchor.y - 8 }
   ];
+  const templates = [
+    {
+      name: "Rift Scavenger",
+      art: "RSC",
+      flavor: "A skittering hunter that drags bones into the dark.",
+      level: 1,
+      tier: "common",
+      attackPower: 1,
+      hp: 5,
+      maxHp: 5,
+      rewardXp: 8,
+      rewardGold: 3,
+      dropTable: [
+        { item: "herb", min: 1, max: 2, chance: 0.7 },
+        { item: "fang", min: 1, max: 1, chance: 0.45 }
+      ]
+    },
+    {
+      name: "Rift Stalker",
+      art: "RST",
+      flavor: "A warped predator that lunges from weak points in the veil.",
+      level: 2,
+      tier: "uncommon",
+      attackPower: 2,
+      hp: 8,
+      maxHp: 8,
+      rewardXp: 14,
+      rewardGold: 5,
+      dropTable: [
+        { item: "herb", min: 1, max: 2, chance: 0.5 },
+        { item: "fang", min: 1, max: 2, chance: 0.8 }
+      ]
+    },
+    {
+      name: "Veil Brute",
+      art: "VBT",
+      flavor: "A hulking shard-beast that smashes through cover.",
+      level: 3,
+      tier: "elite",
+      attackPower: 3,
+      hp: 12,
+      maxHp: 12,
+      rewardXp: 22,
+      rewardGold: 9,
+      dropTable: [
+        { item: "fang", min: 1, max: 2, chance: 0.9 },
+        { item: "essence", min: 1, max: 1, chance: 0.45 }
+      ]
+    },
+    {
+      name: "Abyss Warden",
+      art: "AWD",
+      flavor: "A sentry that channels volatile rift energy.",
+      level: 4,
+      tier: "rare",
+      attackPower: 4,
+      hp: 16,
+      maxHp: 16,
+      rewardXp: 30,
+      rewardGold: 13,
+      dropTable: [
+        { item: "essence", min: 1, max: 2, chance: 0.85 },
+        { item: "herb", min: 1, max: 2, chance: 0.5 }
+      ]
+    }
+  ];
 
   return desired.map((p, idx) => {
     const spawn = findNearestPassableHex(p.x, p.y, terrainSeed, (x, y) => occupiedKeys.has(`${x},${y}`), 28);
     occupiedKeys.add(`${spawn.x},${spawn.y}`);
+    const tmpl = templates[idx % templates.length];
     return {
       id: `enemy-${idx + 1}`,
-      name: "Rift Stalker",
-      art: "RST",
-      flavor: "A warped predator that lunges from weak points in the veil.",
-      attackPower: 1,
+      name: tmpl.name,
+      art: tmpl.art,
+      flavor: tmpl.flavor,
+      level: tmpl.level,
+      tier: tmpl.tier,
+      attackPower: tmpl.attackPower,
       x: spawn.x,
       y: spawn.y,
-      hp: 6,
-      maxHp: 6
+      hp: tmpl.hp,
+      maxHp: tmpl.maxHp,
+      rewardXp: tmpl.rewardXp,
+      rewardGold: tmpl.rewardGold,
+      dropTable: tmpl.dropTable
     };
   });
 }
@@ -351,6 +426,8 @@ export function makeInitialGameState(firstPlayerId) {
     rules: {
       moveRange: 1,
       attackRange: 1,
+      spellRange: 3,
+      spellApCost: 2,
       heroDamage: 2,
       enemyDamage: 1,
       actionPointsPerTurn: 4
@@ -367,8 +444,8 @@ export function ensurePlayerInTurnOrder(game, playerId) {
   if (!game.turn.order.includes(playerId)) game.turn.order.push(playerId);
 }
 
-export function spawnHeroForPlayer(game, playerId, seatIndex = 0) {
-  if (game.heroes[playerId]) return;
+export function spawnHeroForPlayer(game, playerId, seatIndex = 0, options = {}) {
+  if (game.heroes[playerId]) return game.heroes[playerId];
   const terrainSeed = game?.terrain?.seed ?? 0;
   const desiredX = 1 + Math.floor(seatIndex / 2) * 2;
   const desiredY = 1 + (seatIndex % 2) * 3;
@@ -387,10 +464,11 @@ export function spawnHeroForPlayer(game, playerId, seatIndex = 0) {
     ownerPlayerId: playerId,
     x: spawn.x,
     y: spawn.y,
-    hp: 10,
-    maxHp: 10
+    hp: Math.max(1, Number.isFinite(options.hp) ? Math.floor(options.hp) : 10),
+    maxHp: Math.max(1, Number.isFinite(options.maxHp) ? Math.floor(options.maxHp) : 10)
   };
   ensurePlayerInTurnOrder(game, playerId);
+  return game.heroes[playerId];
 }
 
 export function nextActivePlayer(game) {

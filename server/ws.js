@@ -2,7 +2,13 @@ import { WebSocketServer } from "ws";
 import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
-import { loadCampaignState, makeDefaultCampaignState, pickOrCreateCampaignPlayer, saveCampaignState } from "./campaign-store.js";
+import {
+  loadCampaignState,
+  makeDefaultCampaignState,
+  makeDefaultRpgProfile,
+  pickOrCreateCampaignPlayer,
+  saveCampaignState
+} from "./campaign-store.js";
 import {
   ActionType,
   firstLivingEnemy,
@@ -50,6 +56,177 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+const WEAPONS = Object.freeze({
+  rusty_blade: Object.freeze({ id: "rusty_blade", name: "Rusty Blade", damageBonus: 0 }),
+  iron_spear: Object.freeze({ id: "iron_spear", name: "Iron Spear", damageBonus: 2 })
+});
+
+const SPELLS = Object.freeze({
+  arc_bolt: Object.freeze({ id: "arc_bolt", name: "Arc Bolt", range: 3, apCost: 2, damageBonus: 1 })
+});
+
+const CRAFTING_RECIPES = Object.freeze({
+  potion_minor: Object.freeze({
+    id: "potion_minor",
+    label: "Minor Healing Potion",
+    requires: Object.freeze({ herb: 2, fang: 1 }),
+    yields: Object.freeze({ potion: 1 }),
+    apCost: 1
+  })
+});
+
+const ITEM_LABELS = Object.freeze({
+  herb: "Herb",
+  fang: "Fang",
+  essence: "Essence",
+  potion: "Potion"
+});
+
+const ENEMY_TEMPLATES = Object.freeze({
+  common: Object.freeze({
+    name: "Rift Scavenger",
+    art: "RSC",
+    flavor: "A skittering hunter that drags bones into the dark.",
+    tier: "common",
+    level: 1,
+    hp: 5,
+    attackPower: 1,
+    rewardXp: 8,
+    rewardGold: 3,
+    dropTable: Object.freeze([
+      Object.freeze({ item: "herb", min: 1, max: 2, chance: 0.7 }),
+      Object.freeze({ item: "fang", min: 1, max: 1, chance: 0.45 })
+    ])
+  }),
+  uncommon: Object.freeze({
+    name: "Rift Stalker",
+    art: "RST",
+    flavor: "A warped predator that lunges from weak points in the veil.",
+    tier: "uncommon",
+    level: 2,
+    hp: 8,
+    attackPower: 2,
+    rewardXp: 14,
+    rewardGold: 5,
+    dropTable: Object.freeze([
+      Object.freeze({ item: "herb", min: 1, max: 2, chance: 0.5 }),
+      Object.freeze({ item: "fang", min: 1, max: 2, chance: 0.8 })
+    ])
+  }),
+  elite: Object.freeze({
+    name: "Veil Brute",
+    art: "VBT",
+    flavor: "A hulking shard-beast that smashes through cover.",
+    tier: "elite",
+    level: 3,
+    hp: 12,
+    attackPower: 3,
+    rewardXp: 22,
+    rewardGold: 9,
+    dropTable: Object.freeze([
+      Object.freeze({ item: "fang", min: 1, max: 2, chance: 0.9 }),
+      Object.freeze({ item: "essence", min: 1, max: 1, chance: 0.45 })
+    ])
+  }),
+  rare: Object.freeze({
+    name: "Abyss Warden",
+    art: "AWD",
+    flavor: "A sentry that channels volatile rift energy.",
+    tier: "rare",
+    level: 4,
+    hp: 16,
+    attackPower: 4,
+    rewardXp: 30,
+    rewardGold: 13,
+    dropTable: Object.freeze([
+      Object.freeze({ item: "essence", min: 1, max: 2, chance: 0.85 }),
+      Object.freeze({ item: "herb", min: 1, max: 2, chance: 0.5 })
+    ])
+  })
+});
+
+function xpNeededForLevel(level) {
+  return 20 + Math.max(0, level - 1) * 12;
+}
+
+function heroMaxHpForLevel(level) {
+  return 10 + Math.max(0, level - 1) * 2;
+}
+
+function clone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function ensureRpgProfile(player) {
+  const base = makeDefaultRpgProfile();
+  if (!player || typeof player !== "object") return clone(base);
+
+  const raw = player.rpg && typeof player.rpg === "object" ? player.rpg : {};
+  const inventory = {
+    ...base.inventory,
+    ...(raw.inventory && typeof raw.inventory === "object" ? raw.inventory : {})
+  };
+  for (const key of Object.keys(base.inventory)) {
+    inventory[key] = Math.max(0, Number(inventory[key]) || 0);
+  }
+
+  const level = Math.max(1, Number(raw.level) || base.level);
+  player.rpg = {
+    ...base,
+    ...raw,
+    level,
+    xp: Math.max(0, Number(raw.xp) || 0),
+    xpToNext: Math.max(10, Number(raw.xpToNext) || xpNeededForLevel(level)),
+    gold: Math.max(0, Number(raw.gold) || 0),
+    weaponId: WEAPONS[raw.weaponId] ? raw.weaponId : base.weaponId,
+    spellId: SPELLS[raw.spellId] ? raw.spellId : base.spellId,
+    inventory
+  };
+  return player.rpg;
+}
+
+function makeEnemyFromTemplate(id, template, x, y) {
+  return {
+    id,
+    name: template.name,
+    art: template.art,
+    flavor: template.flavor,
+    tier: template.tier,
+    level: template.level,
+    attackPower: template.attackPower,
+    x,
+    y,
+    hp: template.hp,
+    maxHp: template.hp,
+    rewardXp: template.rewardXp,
+    rewardGold: template.rewardGold,
+    dropTable: clone(template.dropTable)
+  };
+}
+
+function pickScaledEnemyTemplate(avgLevel = 1, defeatedCount = 0) {
+  const threat = Math.max(1, Math.floor(avgLevel + defeatedCount / 6));
+  if (threat >= 6) return ENEMY_TEMPLATES.rare;
+  if (threat >= 4) return Math.random() < 0.55 ? ENEMY_TEMPLATES.elite : ENEMY_TEMPLATES.rare;
+  if (threat >= 3) return Math.random() < 0.5 ? ENEMY_TEMPLATES.uncommon : ENEMY_TEMPLATES.elite;
+  return Math.random() < 0.75 ? ENEMY_TEMPLATES.common : ENEMY_TEMPLATES.uncommon;
+}
+
+function rollEnemyDrops(enemyUnit) {
+  const entries = Array.isArray(enemyUnit?.dropTable) ? enemyUnit.dropTable : [];
+  const drops = {};
+  for (const entry of entries) {
+    if (!entry || !entry.item) continue;
+    const chance = clamp(Number(entry.chance) || 0, 0, 1);
+    if (Math.random() > chance) continue;
+    const min = Math.max(1, Math.floor(Number(entry.min) || 1));
+    const max = Math.max(min, Math.floor(Number(entry.max) || min));
+    const qty = min + Math.floor(Math.random() * (max - min + 1));
+    drops[entry.item] = (drops[entry.item] || 0) + qty;
+  }
+  return drops;
+}
+
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ server });
 
@@ -82,6 +259,29 @@ export function setupWebSocket(server) {
     if (game.scenario.status !== "active") game.scenario.status = "active";
     game.rules = game.rules || {};
     if ((game.rules.actionPointsPerTurn ?? 0) < 4) game.rules.actionPointsPerTurn = 4;
+    if (!Number.isFinite(game.rules.spellRange) || game.rules.spellRange < 2) game.rules.spellRange = 3;
+    if (!Number.isFinite(game.rules.spellApCost) || game.rules.spellApCost < 1) game.rules.spellApCost = 2;
+
+    for (const [playerId, hero] of Object.entries(game.heroes || {})) {
+      const profile = rpgProfileById(playerId);
+      const expectedMaxHp = heroMaxHpForLevel(profile.level);
+      hero.maxHp = Math.max(1, Number(hero.maxHp) || expectedMaxHp);
+      if (hero.maxHp < expectedMaxHp) hero.maxHp = expectedMaxHp;
+      hero.hp = clamp(Math.max(0, Number(hero.hp) || hero.maxHp), 0, hero.maxHp);
+      hero.level = profile.level;
+    }
+
+    for (const enemyUnit of game.enemies || []) {
+      const fallback = ENEMY_TEMPLATES.common;
+      enemyUnit.tier = typeof enemyUnit.tier === "string" ? enemyUnit.tier : fallback.tier;
+      enemyUnit.level = Math.max(1, Number(enemyUnit.level) || fallback.level);
+      enemyUnit.maxHp = Math.max(1, Number(enemyUnit.maxHp) || Number(enemyUnit.hp) || fallback.hp);
+      enemyUnit.hp = clamp(Math.max(0, Number(enemyUnit.hp) || enemyUnit.maxHp), 0, enemyUnit.maxHp);
+      enemyUnit.attackPower = Math.max(1, Number(enemyUnit.attackPower) || fallback.attackPower);
+      enemyUnit.rewardXp = Math.max(1, Number(enemyUnit.rewardXp) || enemyUnit.level * 8);
+      enemyUnit.rewardGold = Math.max(0, Number(enemyUnit.rewardGold) || enemyUnit.level * 3);
+      enemyUnit.dropTable = Array.isArray(enemyUnit.dropTable) ? enemyUnit.dropTable : clone(fallback.dropTable);
+    }
   }
 
   function saveCampaignSnapshot() {
@@ -123,7 +323,27 @@ export function setupWebSocket(server) {
     return `http://${host}:5174/?session=${session.sessionId}`;
   }
 
+  function campaignPlayerById(playerId) {
+    return (campaign.players || []).find((p) => p.id === playerId) || null;
+  }
+
+  function rpgProfileById(playerId) {
+    return ensureRpgProfile(campaignPlayerById(playerId));
+  }
+
+  function equipAutoUpgrades(profile) {
+    if (!profile) return null;
+    if (profile.level >= 3 && profile.weaponId !== "iron_spear") {
+      profile.weaponId = "iron_spear";
+      return WEAPONS.iron_spear;
+    }
+    return null;
+  }
+
   function ensureGameFor(playerId, seatIndex0) {
+    const playerRecord = campaignPlayerById(playerId);
+    const profile = ensureRpgProfile(playerRecord);
+
     if (!game) {
       game = makeInitialGameState(playerId);
       gameHistory.length = 0;
@@ -133,13 +353,20 @@ export function setupWebSocket(server) {
     } else {
       ensurePlayerInTurnOrder(game, playerId);
     }
-    spawnHeroForPlayer(game, playerId, seatIndex0);
+    const maxHp = heroMaxHpForLevel(profile.level);
+    const hero = spawnHeroForPlayer(game, playerId, seatIndex0, { hp: maxHp, maxHp });
+    if (hero) {
+      hero.maxHp = maxHp;
+      if (hero.hp > hero.maxHp) hero.hp = hero.maxHp;
+      hero.level = profile.level;
+    }
   }
 
   function computePublicState() {
     ensureGameShape();
     const nameById = new Map(session.seats.filter((s) => s.playerId).map((s) => [s.playerId, s.playerName]));
     const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
+    const levelById = new Map((campaign.players || []).map((p) => [p.id, ensureRpgProfile(p).level]));
     const primaryEnemy = game ? firstLivingEnemy(game) : null;
     return {
       sessionId: session.sessionId,
@@ -172,6 +399,7 @@ export function setupWebSocket(server) {
             heroes: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
               ownerPlayerName: nameById.get(h.ownerPlayerId) || campaignNameById.get(h.ownerPlayerId) || null,
+              level: levelById.get(h.ownerPlayerId) || 1,
               x: h.x,
               y: h.y,
               hp: h.hp,
@@ -182,6 +410,8 @@ export function setupWebSocket(server) {
               name: enemyUnit.name || null,
               art: enemyUnit.art || null,
               flavor: enemyUnit.flavor || null,
+              tier: enemyUnit.tier || "common",
+              level: enemyUnit.level || 1,
               attackPower: enemyUnit.attackPower ?? game.rules.enemyDamage,
               x: enemyUnit.x,
               y: enemyUnit.y,
@@ -194,6 +424,8 @@ export function setupWebSocket(server) {
                   name: primaryEnemy.name || null,
                   art: primaryEnemy.art || null,
                   flavor: primaryEnemy.flavor || null,
+                  tier: primaryEnemy.tier || "common",
+                  level: primaryEnemy.level || 1,
                   attackPower: primaryEnemy.attackPower ?? game.rules.enemyDamage,
                   x: primaryEnemy.x,
                   y: primaryEnemy.y,
@@ -201,7 +433,13 @@ export function setupWebSocket(server) {
                   maxHp: primaryEnemy.maxHp
                 }
               : null,
-            rules: { moveRange: game.rules.moveRange, attackRange: game.rules.attackRange, actionPointsPerTurn: game.rules.actionPointsPerTurn },
+            rules: {
+              moveRange: game.rules.moveRange,
+              attackRange: game.rules.attackRange,
+              spellRange: game.rules.spellRange,
+              spellApCost: game.rules.spellApCost,
+              actionPointsPerTurn: game.rules.actionPointsPerTurn
+            },
             lastEnemyDamage: game.lastEnemyDamage
               ? {
                   enemyId: game.lastEnemyDamage.enemyId,
@@ -224,6 +462,10 @@ export function setupWebSocket(server) {
     const isActive = game?.turn.activePlayerId === playerId;
     const hero = game?.heroes?.[playerId] ?? null;
     const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
+    const campaignPlayer = campaignPlayerById(playerId);
+    const rpg = ensureRpgProfile(campaignPlayer);
+    const weapon = WEAPONS[rpg.weaponId] || WEAPONS.rusty_blade;
+    const spell = SPELLS[rpg.spellId] || SPELLS.arc_bolt;
     const primaryEnemy = game ? firstLivingEnemy(game) : null;
     return {
       sessionId: session.sessionId,
@@ -251,7 +493,28 @@ export function setupWebSocket(server) {
             rules: {
               moveRange: game.rules.moveRange,
               attackRange: game.rules.attackRange,
+              spellRange: game.rules.spellRange,
+              spellApCost: game.rules.spellApCost,
               actionPointsPerTurn: game.rules.actionPointsPerTurn
+            },
+            rpg: {
+              level: rpg.level,
+              xp: rpg.xp,
+              xpToNext: rpg.xpToNext,
+              gold: rpg.gold,
+              weapon: {
+                id: weapon.id,
+                name: weapon.name,
+                damageBonus: weapon.damageBonus
+              },
+              spell: {
+                id: spell.id,
+                name: spell.name,
+                range: spell.range,
+                apCost: spell.apCost,
+                damageBonus: spell.damageBonus
+              },
+              inventory: { ...rpg.inventory }
             },
             heroesPublic: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
@@ -259,6 +522,7 @@ export function setupWebSocket(server) {
                 session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName ||
                 campaignNameById.get(h.ownerPlayerId) ||
                 null,
+              level: rpgProfileById(h.ownerPlayerId).level,
               x: h.x,
               y: h.y,
               hp: h.hp,
@@ -270,6 +534,8 @@ export function setupWebSocket(server) {
               name: enemyUnit.name || null,
               art: enemyUnit.art || null,
               flavor: enemyUnit.flavor || null,
+              tier: enemyUnit.tier || "common",
+              level: enemyUnit.level || 1,
               attackPower: enemyUnit.attackPower ?? game.rules.enemyDamage,
               x: enemyUnit.x,
               y: enemyUnit.y,
@@ -282,6 +548,8 @@ export function setupWebSocket(server) {
                   name: primaryEnemy.name || null,
                   art: primaryEnemy.art || null,
                   flavor: primaryEnemy.flavor || null,
+                  tier: primaryEnemy.tier || "common",
+                  level: primaryEnemy.level || 1,
                   attackPower: primaryEnemy.attackPower ?? game.rules.enemyDamage,
                   x: primaryEnemy.x,
                   y: primaryEnemy.y,
@@ -295,6 +563,7 @@ export function setupWebSocket(server) {
               game.lastHeroDamage && game.lastHeroDamage.actorPlayerId === playerId
                 ? {
                     amount: game.lastHeroDamage.amount,
+                    type: game.lastHeroDamage.type || "weapon",
                     enemyHp: game.lastHeroDamage.enemyHp,
                     enemyMaxHp: game.lastHeroDamage.enemyMaxHp,
                     at: game.lastHeroDamage.at
@@ -310,12 +579,33 @@ export function setupWebSocket(server) {
                     at: game.lastEnemyDamage.at
                   }
                 : null,
+            lastLoot:
+              game.lastLoot && game.lastLoot.playerId === playerId
+                ? {
+                    enemyName: game.lastLoot.enemyName,
+                    xp: game.lastLoot.xp,
+                    gold: game.lastLoot.gold,
+                    drops: game.lastLoot.drops,
+                    at: game.lastLoot.at
+                  }
+                : null,
             allowedActions:
-              isActive && hero && hero.hp > 0 && (game.turn.apRemaining ?? 0) > 0
-                ? [ActionType.MOVE, ActionType.ATTACK, ActionType.END_TURN]
-                : isActive && hero && hero.hp > 0
-                  ? [ActionType.END_TURN]
-                  : []
+              (() => {
+                if (!(isActive && hero && hero.hp > 0)) return [];
+                const actions = [ActionType.END_TURN];
+                const apRemaining = game.turn.apRemaining ?? 0;
+                if (apRemaining > 0) {
+                  actions.push(ActionType.MOVE, ActionType.ATTACK);
+                  const recipe = CRAFTING_RECIPES.potion_minor;
+                  const canCraftPotion =
+                    Object.entries(recipe.requires).every(([itemId, qty]) => (rpg.inventory[itemId] || 0) >= qty) &&
+                    apRemaining >= recipe.apCost;
+                  if (canCraftPotion) actions.push(ActionType.CRAFT_ITEM);
+                  if ((rpg.inventory.potion || 0) > 0 && hero.hp < hero.maxHp) actions.push(ActionType.USE_ITEM);
+                }
+                if (apRemaining >= spell.apCost) actions.push(ActionType.CAST_SPELL);
+                return actions;
+              })()
           }
         : null
     };
@@ -369,10 +659,83 @@ export function setupWebSocket(server) {
     return Boolean(enemyAt(x, y));
   }
 
-  function markEnemyDefeated(enemyUnit) {
+  function grantXp(profile, xpAmount) {
+    let gainedLevels = 0;
+    profile.xp += Math.max(0, xpAmount);
+    while (profile.xp >= profile.xpToNext) {
+      profile.xp -= profile.xpToNext;
+      profile.level += 1;
+      profile.xpToNext = xpNeededForLevel(profile.level);
+      gainedLevels += 1;
+    }
+    return gainedLevels;
+  }
+
+  function addInventory(profile, drops) {
+    profile.inventory = profile.inventory || {};
+    for (const [itemId, qty] of Object.entries(drops || {})) {
+      if (!qty) continue;
+      profile.inventory[itemId] = Math.max(0, (profile.inventory[itemId] || 0) + qty);
+    }
+  }
+
+  function formatDrops(drops) {
+    const parts = Object.entries(drops || {})
+      .filter(([, qty]) => qty > 0)
+      .map(([itemId, qty]) => `${qty}x ${ITEM_LABELS[itemId] || itemId}`);
+    return parts.length ? parts.join(", ") : "none";
+  }
+
+  function markEnemyDefeated(enemyUnit, killerPlayerId = null) {
     if (!game || !enemyUnit) return;
+    const now = Date.now();
     game.scenario.defeatedCount = (game.scenario.defeatedCount ?? 0) + 1;
-    game.log.push({ at: Date.now(), msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total).` });
+
+    const xpReward = Math.max(1, Number(enemyUnit.rewardXp) || Number(enemyUnit.level) * 8 || 8);
+    const goldReward = Math.max(0, Number(enemyUnit.rewardGold) || Number(enemyUnit.level) * 3 || 0);
+    const drops = rollEnemyDrops(enemyUnit);
+
+    if (killerPlayerId) {
+      const campaignPlayer = campaignPlayerById(killerPlayerId);
+      const profile = ensureRpgProfile(campaignPlayer);
+      const levelsGained = grantXp(profile, xpReward);
+      profile.gold += goldReward;
+      addInventory(profile, drops);
+      const upgradedWeapon = equipAutoUpgrades(profile);
+
+      const hero = game.heroes?.[killerPlayerId];
+      if (hero) {
+        const nextMaxHp = heroMaxHpForLevel(profile.level);
+        if (nextMaxHp > hero.maxHp) {
+          hero.maxHp = nextMaxHp;
+          hero.hp = clamp(hero.hp + levelsGained * 2, 0, hero.maxHp);
+        }
+        hero.level = profile.level;
+      }
+
+      game.lastLoot = {
+        playerId: killerPlayerId,
+        enemyName: enemyUnit.name || "Monster",
+        xp: xpReward,
+        gold: goldReward,
+        drops,
+        at: now
+      };
+
+      game.log.push({
+        at: now,
+        msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total). +${xpReward} XP, +${goldReward} gold, drops: ${formatDrops(drops)}.`
+      });
+      if (levelsGained > 0) {
+        game.log.push({ at: now, msg: `${shortName(killerPlayerId)} reached level ${profile.level}!` });
+      }
+      if (upgradedWeapon) {
+        game.log.push({ at: now, msg: `${shortName(killerPlayerId)} upgraded weapon to ${upgradedWeapon.name}.` });
+      }
+      return;
+    }
+
+    game.log.push({ at: now, msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total).` });
   }
 
   function enemyTakeTurn() {
@@ -395,17 +758,18 @@ export function setupWebSocket(server) {
       const inRange = aliveHeroes.filter((h) => manhattan(h, enemyUnit) <= game.rules.attackRange);
       if (inRange.length) {
         const target = [...inRange].sort((a, b) => a.hp - b.hp || manhattan(a, enemyUnit) - manhattan(b, enemyUnit))[0];
+        const enemyDamage = Math.max(1, Number(enemyUnit.attackPower) || game.rules.enemyDamage);
         const damageAt = Date.now();
-        target.hp = clamp(target.hp - game.rules.enemyDamage, 0, target.maxHp);
+        target.hp = clamp(target.hp - enemyDamage, 0, target.maxHp);
         game.lastEnemyDamage = {
           enemyId: enemyUnit.id,
           targetPlayerId: target.ownerPlayerId,
-          amount: game.rules.enemyDamage,
+          amount: enemyDamage,
           heroHp: target.hp,
           heroMaxHp: target.maxHp,
           at: damageAt
         };
-        game.log.push({ at: damageAt, msg: `${enemyUnit.name || "Enemy"} hits ${shortName(target.ownerPlayerId)} for ${game.rules.enemyDamage}.` });
+        game.log.push({ at: damageAt, msg: `${enemyUnit.name || "Enemy"} hits ${shortName(target.ownerPlayerId)} for ${enemyDamage}.` });
         if (target.hp <= 0) game.log.push({ at: damageAt, msg: `Hero ${shortName(target.ownerPlayerId)} is down!` });
         continue;
       }
@@ -474,6 +838,9 @@ export function setupWebSocket(server) {
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
     const hero = game.heroes[actorPlayerId];
     if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+    const profile = rpgProfileById(actorPlayerId);
+    const weapon = WEAPONS[profile.weaponId] || WEAPONS.rusty_blade;
+    const weaponDamage = Math.max(1, game.rules.heroDamage + weapon.damageBonus + Math.floor((profile.level - 1) / 3));
     const targets = livingEnemies(game)
       .map((enemyUnit) => ({ enemyUnit, dist: manhattan(hero, enemyUnit) }))
       .filter((x) => x.dist <= game.rules.attackRange)
@@ -483,21 +850,119 @@ export function setupWebSocket(server) {
 
     pushGameHistory();
     const enemyHpBefore = target.hp;
-    target.hp = clamp(target.hp - game.rules.heroDamage, 0, target.maxHp);
+    target.hp = clamp(target.hp - weaponDamage, 0, target.maxHp);
     const dealt = enemyHpBefore - target.hp;
     game.lastHeroDamage = {
       actorPlayerId,
       amount: dealt,
+      type: "weapon",
       enemyId: target.id,
       enemyHp: target.hp,
       enemyMaxHp: target.maxHp,
       at: Date.now()
     };
-    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks ${target.name || "enemy"} for ${game.rules.heroDamage}.` });
+    game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} attacks ${target.name || "enemy"} with ${weapon.name} for ${weaponDamage}.` });
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
-    if (target.hp <= 0) markEnemyDefeated(target);
+    if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
 
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
+    emitViews();
+  }
+
+  function handleCastSpell(ws, id, actorPlayerId) {
+    if (!requireActive(ws, id, actorPlayerId)) return;
+    const hero = game.heroes[actorPlayerId];
+    if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+
+    const profile = rpgProfileById(actorPlayerId);
+    const spell = SPELLS[profile.spellId] || SPELLS.arc_bolt;
+    const spellApCost = Math.max(1, Number(spell.apCost) || game.rules.spellApCost || 2);
+    const spellRange = Math.max(2, Number(spell.range) || game.rules.spellRange || 3);
+    if ((game.turn.apRemaining ?? 0) < spellApCost) return reject(ws, id, "NO_AP", `Spell needs ${spellApCost} AP.`);
+
+    const spellDamage = Math.max(1, game.rules.heroDamage + spell.damageBonus + Math.floor((profile.level - 1) / 2));
+    const targets = livingEnemies(game)
+      .map((enemyUnit) => ({ enemyUnit, dist: manhattan(hero, enemyUnit) }))
+      .filter((x) => x.dist <= spellRange)
+      .sort((a, b) => a.enemyUnit.hp - b.enemyUnit.hp || a.dist - b.dist || a.enemyUnit.id.localeCompare(b.enemyUnit.id));
+    if (!targets.length) return reject(ws, id, "OUT_OF_RANGE", `No enemy in spell range (range ${spellRange}).`);
+    const target = targets[0].enemyUnit;
+
+    pushGameHistory();
+    const enemyHpBefore = target.hp;
+    target.hp = clamp(target.hp - spellDamage, 0, target.maxHp);
+    const dealt = enemyHpBefore - target.hp;
+    game.lastHeroDamage = {
+      actorPlayerId,
+      amount: dealt,
+      type: "spell",
+      enemyId: target.id,
+      enemyHp: target.hp,
+      enemyMaxHp: target.maxHp,
+      at: Date.now()
+    };
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - spellApCost);
+    game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} casts ${spell.name} on ${target.name || "enemy"} for ${spellDamage}.` });
+    if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, cast: spell.id }, id));
+    emitViews();
+  }
+
+  function handleCraftItem(ws, id, actorPlayerId, params = {}) {
+    if (!requireActive(ws, id, actorPlayerId)) return;
+    const hero = game.heroes[actorPlayerId];
+    if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+
+    const recipeId = (params.recipeId || "potion_minor").toString();
+    const recipe = CRAFTING_RECIPES[recipeId];
+    if (!recipe) return reject(ws, id, "BAD_RECIPE", "Unknown recipe.");
+    if ((game.turn.apRemaining ?? 0) < recipe.apCost) return reject(ws, id, "NO_AP", `Crafting needs ${recipe.apCost} AP.`);
+
+    const profile = rpgProfileById(actorPlayerId);
+    for (const [itemId, qty] of Object.entries(recipe.requires)) {
+      if ((profile.inventory[itemId] || 0) < qty) {
+        return reject(ws, id, "MISSING_ITEMS", `Need ${qty} ${ITEM_LABELS[itemId] || itemId}.`);
+      }
+    }
+
+    pushGameHistory();
+    for (const [itemId, qty] of Object.entries(recipe.requires)) {
+      profile.inventory[itemId] = Math.max(0, (profile.inventory[itemId] || 0) - qty);
+    }
+    for (const [itemId, qty] of Object.entries(recipe.yields)) {
+      profile.inventory[itemId] = (profile.inventory[itemId] || 0) + qty;
+    }
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - recipe.apCost);
+    game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} crafts ${recipe.label}.` });
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, crafted: recipeId }, id));
+    emitViews();
+  }
+
+  function handleUseItem(ws, id, actorPlayerId, params = {}) {
+    if (!requireActive(ws, id, actorPlayerId)) return;
+    const hero = game.heroes[actorPlayerId];
+    if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+    if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining.");
+
+    const itemId = (params.itemId || "potion").toString();
+    if (itemId !== "potion") return reject(ws, id, "BAD_ITEM", "Unsupported item.");
+
+    const profile = rpgProfileById(actorPlayerId);
+    if ((profile.inventory.potion || 0) <= 0) return reject(ws, id, "MISSING_ITEMS", "No potions available.");
+    if (hero.hp >= hero.maxHp) return reject(ws, id, "FULL_HP", "Hero is already at full HP.");
+
+    pushGameHistory();
+    profile.inventory.potion -= 1;
+    const healAmount = 6;
+    const hpBefore = hero.hp;
+    hero.hp = clamp(hero.hp + healAmount, 0, hero.maxHp);
+    const actualHealed = hero.hp - hpBefore;
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
+    game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} drinks a potion and restores ${actualHealed} HP.` });
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, used: itemId, healed: actualHealed }, id));
     emitViews();
   }
 
@@ -550,6 +1015,7 @@ export function setupWebSocket(server) {
   }
 
   function assignSeatToCampaignPlayer(seatObj, campaignPlayer, info) {
+    ensureRpgProfile(campaignPlayer);
     const token = uuid();
     seatObj.occupied = true;
     seatObj.playerName = campaignPlayer.name;
@@ -588,20 +1054,15 @@ export function setupWebSocket(server) {
 
     pushGameHistory();
     const enemyNumber = (game.enemies?.length || 0) + 1;
+    const aliveProfiles = (game.turn.order || []).map((pid) => rpgProfileById(pid));
+    const avgLevel = aliveProfiles.length
+      ? aliveProfiles.reduce((sum, p) => sum + p.level, 0) / aliveProfiles.length
+      : 1;
+    const template = pickScaledEnemyTemplate(avgLevel, game.scenario?.defeatedCount || 0);
     game.enemies = game.enemies || [];
-    game.enemies.push({
-      id: `enemy-${enemyNumber}`,
-      name: "Rift Stalker",
-      art: "RST",
-      flavor: "A warped predator that lunges from weak points in the veil.",
-      attackPower: game.rules.enemyDamage,
-      x: spawn.x,
-      y: spawn.y,
-      hp: 6,
-      maxHp: 6
-    });
+    game.enemies.push(makeEnemyFromTemplate(`enemy-${enemyNumber}`, template, spawn.x, spawn.y));
     game.lastHeroDamage = null;
-    game.log.push({ at: Date.now(), msg: `Monster spawned at (${spawn.x},${spawn.y}) by table.` });
+    game.log.push({ at: Date.now(), msg: `${template.name} (Lv.${template.level}) spawned at (${spawn.x},${spawn.y}) by table.` });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, spawn }, id));
     emitViews();
@@ -726,6 +1187,9 @@ export function setupWebSocket(server) {
 
     if (action === ActionType.MOVE) return handleMove(ws, id, actorPlayerId, params);
     if (action === ActionType.ATTACK) return handleAttack(ws, id, actorPlayerId);
+    if (action === ActionType.CAST_SPELL) return handleCastSpell(ws, id, actorPlayerId);
+    if (action === ActionType.CRAFT_ITEM) return handleCraftItem(ws, id, actorPlayerId, params);
+    if (action === ActionType.USE_ITEM) return handleUseItem(ws, id, actorPlayerId, params);
     if (action === ActionType.END_TURN) return handleEndTurn(ws, id, actorPlayerId);
 
     reject(ws, id, "UNKNOWN_ACTION", `Unknown action: ${action}`);
