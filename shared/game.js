@@ -4,7 +4,8 @@ export const ActionType = Object.freeze({
   END_TURN: "END_TURN",
   SPAWN_ENEMY: "SPAWN_ENEMY",
   KICK_PLAYER: "KICK_PLAYER",
-  UNDO: "UNDO"
+  UNDO: "UNDO",
+  NEW_CAMPAIGN: "NEW_CAMPAIGN"
 });
 
 export const TerrainClass = Object.freeze({

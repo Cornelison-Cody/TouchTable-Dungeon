@@ -141,6 +141,17 @@ function DungeonTableView({ onBackToMenu }) {
     sendTableAction(ActionType.UNDO, {}, "undo-action");
   }
 
+  function startNewCampaign() {
+    const confirmed = window.confirm(
+      "Start a new campaign? This clears the current run, removes all seated players, and requires everyone to rejoin."
+    );
+    if (!confirmed) return;
+    setKickPrompt(null);
+    setEnemyInspectId(null);
+    setQrOpen(false);
+    sendTableAction(ActionType.NEW_CAMPAIGN, {}, "new-campaign");
+  }
+
   function kickPlayer(playerId, playerName) {
     if (!playerId) return;
     setKickPrompt({ playerId, playerName: playerName || playerId.slice(0, 4) });
@@ -913,6 +924,9 @@ function DungeonTableView({ onBackToMenu }) {
                 </button>
                 <button className="ttd-btn" onClick={undoLastAction} disabled={!game}>
                   Undo Last Action
+                </button>
+                <button className="ttd-btn danger" onClick={startNewCampaign}>
+                  New Campaign
                 </button>
                 <button
                   className="ttd-btn"

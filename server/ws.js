@@ -2,7 +2,7 @@ import { WebSocketServer } from "ws";
 import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
-import { loadCampaignState, pickOrCreateCampaignPlayer, saveCampaignState } from "./campaign-store.js";
+import { loadCampaignState, makeDefaultCampaignState, pickOrCreateCampaignPlayer, saveCampaignState } from "./campaign-store.js";
 import {
   ActionType,
   firstLivingEnemy,
@@ -82,6 +82,12 @@ export function setupWebSocket(server) {
     ensureGameShape();
     campaign.activeGame = game ? cloneGameState(game) : null;
     saveCampaignState(campaign);
+  }
+
+  function resetCampaignInPlace() {
+    const freshCampaign = makeDefaultCampaignState();
+    for (const key of Object.keys(campaign)) delete campaign[key];
+    Object.assign(campaign, freshCampaign);
   }
 
   ensureGameShape();
@@ -669,6 +675,38 @@ export function setupWebSocket(server) {
     emitViews();
   }
 
+  function handleNewCampaign(ws, id) {
+    resetCampaignInPlace();
+    game = null;
+    gameHistory.length = 0;
+
+    for (const seatObj of session.seats) {
+      seatObj.occupied = false;
+      seatObj.playerName = null;
+      seatObj.playerId = null;
+      seatObj.resumeToken = null;
+    }
+
+    for (const [clientWs, info] of clients.entries()) {
+      if (info.role !== Role.PHONE) continue;
+      info.playerId = null;
+      info.seat = null;
+      send(
+        clientWs,
+        makeMsg(
+          MsgType.ERROR,
+          { code: "CAMPAIGN_RESET", message: "Table started a new campaign. Join again to continue." },
+          "campaign-reset"
+        )
+      );
+      send(clientWs, makeMsg(MsgType.STATE_PRIVATE, { state: { sessionId: session.sessionId, player: null, game: null } }));
+    }
+
+    saveCampaignState(campaign);
+    send(ws, makeMsg(MsgType.OK, { accepted: true, campaignId: campaign.id }, id));
+    emitViews();
+  }
+
   function handleAction(ws, id, actorPlayerId, payload) {
     if (!game) return reject(ws, id, "NO_GAME", "No game started yet. Join a seat first.");
     ensureGameShape();
@@ -838,6 +876,10 @@ export function setupWebSocket(server) {
         }
         if (action === ActionType.KICK_PLAYER) {
           handleKickPlayer(ws, msg.id, msg.payload?.params ?? {});
+          return;
+        }
+        if (action === ActionType.NEW_CAMPAIGN) {
+          handleNewCampaign(ws, msg.id);
           return;
         }
         reject(ws, msg.id, "TABLE_FORBIDDEN", "Table is view-only. Move from your phone.");

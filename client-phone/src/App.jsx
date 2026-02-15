@@ -125,7 +125,7 @@ export default function App() {
         } else if (msg.t === MsgType.ERROR) {
           const m = msg.payload?.message ?? "Unknown error";
           const sn = msg.payload?.snippet;
-          if (msg.payload?.code === "KICKED") {
+          if (msg.payload?.code === "KICKED" || msg.payload?.code === "CAMPAIGN_RESET") {
             localStorage.removeItem("tt_resume_token");
             setJoined(false);
             setPlayer(null);
