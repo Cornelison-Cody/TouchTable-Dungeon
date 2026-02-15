@@ -251,7 +251,9 @@ function DungeonTableView({ onBackToMenu }) {
   const scenario = game?.scenario || null;
   const heroes = game?.heroes || [];
   const enemies = game?.enemies || (game?.enemy ? [game.enemy] : []);
+  const groundLoot = game?.groundLoot || [];
   const livingEnemies = enemies.filter((e) => e && e.hp > 0);
+  const heroByOwnerId = new Map(heroes.map((h) => [h.ownerPlayerId, h]));
   const primaryEnemy = livingEnemies[0] || null;
   const log = game?.log || [];
   const activePlayerId = game?.turn?.activePlayerId || null;
@@ -984,13 +986,18 @@ function DungeonTableView({ onBackToMenu }) {
                 <ul className="ttd-players">
                   {publicState.seats.map((seat) => (
                     <li key={seat.seat} className="ttd-player">
-                      <div>
+                      <div style={{ minWidth: 0 }}>
                         <span className="ttd-seat">Seat {seat.seat}</span>
                         <span className="ttd-name" style={{ opacity: seat.occupied ? 1 : 0.5 }}>
                           {seat.occupied ? seat.playerName : "Empty"}
                         </span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {seat.playerId && heroByOwnerId.get(seat.playerId) ? (
+                          <span className="ttd-pill">
+                            {heroByOwnerId.get(seat.playerId).hp}/{heroByOwnerId.get(seat.playerId).maxHp}
+                          </span>
+                        ) : null}
                         {seat.playerId && activePlayerId === seat.playerId ? <span className="ttd-pill">Active</span> : null}
                         {seat.occupied && seat.playerId ? (
                           <button className="ttd-btn warn" onClick={() => kickPlayer(seat.playerId, seat.playerName)}>
@@ -1109,10 +1116,13 @@ function DungeonTableView({ onBackToMenu }) {
                     const y = visibleMinY + yi;
                     const terrain = getTerrain(x, y);
                     const terrainTextureId = `ttd-terrain-${x}-${y}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-                    const heroHere = heroes.find((h) => h.hp > 0 && h.x === x && h.y === y) || null;
+                    const heroHere = heroes.find((h) => h.x === x && h.y === y) || null;
                     const enemyHere = livingEnemies.find((e) => e.x === x && e.y === y) || null;
+                    const lootHere = groundLoot.find((l) => l.x === x && l.y === y) || null;
                     const isEnemy = Boolean(enemyHere);
+                    const isLoot = Boolean(lootHere);
                     const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
+                    const isHeroDown = Boolean(heroHere && heroHere.hp <= 0);
                     const isBlockedTerrain = !terrain.passable;
 
                     const worldX = x * HEX_STEP_X;
@@ -1120,18 +1130,36 @@ function DungeonTableView({ onBackToMenu }) {
                     const left = worldX - cameraPx.x + boardViewport.width / 2;
                     const top = worldY - cameraPx.y + boardViewport.height / 2;
 
-                    const label = heroHere ? heroGlyph(heroHere) : isEnemy ? `E${enemyHere.level || 1}` : isBlockedTerrain ? "X" : "";
+                    const label = heroHere
+                      ? isHeroDown
+                        ? "DOWN"
+                        : heroGlyph(heroHere)
+                      : isEnemy
+                        ? `E${enemyHere.level || 1}`
+                        : isLoot
+                          ? "LOOT"
+                          : isBlockedTerrain
+                            ? "X"
+                            : "";
                     const isMoveOption = moveOptions.has(`${x},${y}`);
                     const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
                     const isHeroHitCell =
                       tableHeroHitFx && heroHere && tableHeroHitFx.targetPlayerId === heroHere.ownerPlayerId;
 
-                    const bg = isEnemy
+                    const bg = isHeroDown
+                      ? "rgba(110, 64, 44, 0.3)"
+                      : isEnemy
                       ? "rgba(255, 107, 107, 0.2)"
+                      : isLoot
+                        ? "rgba(255, 197, 87, 0.22)"
                       : terrain.fill;
 
-                    const stroke = isEnemy
+                    const stroke = isHeroDown
+                      ? "rgba(214, 138, 104, 0.7)"
+                      : isEnemy
                       ? "rgba(255, 136, 136, 0.5)"
+                      : isLoot
+                        ? "rgba(255, 201, 94, 0.62)"
                       : isActiveCell
                         ? "rgba(76, 214, 138, 0.72)"
                         : "rgba(255, 255, 255, 0.24)";
@@ -1228,7 +1256,7 @@ function DungeonTableView({ onBackToMenu }) {
                                   textShadow: "0 1px 2px rgba(0,0,0,0.55)"
                                 }}
                               >
-                                L{enemyHere.level || 1} HP {enemyHere.hp}/{enemyHere.maxHp}
+                                L{enemyHere.level || 1} {enemyHere.hp}/{enemyHere.maxHp}
                               </div>
                               <div
                                 style={{
@@ -1308,7 +1336,7 @@ function DungeonTableView({ onBackToMenu }) {
                 </div>
                 <div className="ttd-stat-grid" style={{ marginBottom: 10 }}>
                   <div className="ttd-stat">
-                    <label>HP</label>
+                    <label>Health</label>
                     <strong style={mono}>{viewedEnemy.hp}</strong>
                   </div>
                   <div className="ttd-stat">

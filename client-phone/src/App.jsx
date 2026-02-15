@@ -1,65 +1,39 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MsgType, Role, makeMsg } from "../../shared/protocol.js";
-import { ActionType, hexNeighbors, terrainAt } from "../../shared/game.js";
+import { ActionType, hexNeighbors, manhattan, terrainAt } from "../../shared/game.js";
 
 const theme = {
-  bgA: "#0f1720",
-  bgB: "#131c26",
-  card: "#141c26",
-  surface: "#18222e",
-  surfaceAlt: "#1c2733",
-  text: "#e6edf4",
-  sub: "#9db0c3",
-  border: "#2a3848",
-  brand: "#20bfb7",
-  brandDark: "#16938c",
-  danger: "#ff6b6b",
-  success: "#4cd68a",
-  shadow: "0 18px 40px rgba(0, 0, 0, 0.45)"
+  bg: "#0f1722",
+  card: "#142031",
+  panel: "#1a293a",
+  border: "#2a3e56",
+  text: "#e6edf6",
+  sub: "#98adc5",
+  good: "#53d496",
+  bad: "#ff7676",
+  warn: "#f0c473",
+  brand: "#1fbdb5"
 };
 
-const shellStyle = {
+const shell = {
   minHeight: "100vh",
-  padding: 16,
-  background: `radial-gradient(circle at 10% -10%, ${theme.bgA}, transparent 45%), radial-gradient(circle at 90% 0%, ${theme.bgB}, transparent 40%), #0d131a`,
+  padding: 12,
   color: theme.text,
+  background: "radial-gradient(circle at 10% -5%, #18283a, transparent 45%), #0d131b",
   fontFamily: "Avenir Next, Segoe UI, Helvetica Neue, sans-serif"
 };
 
-const cardStyle = {
+const card = {
   border: `1px solid ${theme.border}`,
-  borderRadius: 18,
-  padding: 14,
-  marginBottom: 12,
-  background: theme.card,
-  boxShadow: theme.shadow
+  borderRadius: 14,
+  padding: 10,
+  marginBottom: 10,
+  background: theme.card
 };
 
-const mono = {
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-};
-
-function Icon({ path, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 2 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
-      <path d={path} stroke={stroke} fill={fill} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function StatTile({ icon, label, value, tone = "neutral" }) {
-  const bg = tone === "danger" ? "rgba(255, 107, 107, 0.16)" : tone === "success" ? "rgba(76, 214, 138, 0.16)" : theme.surface;
-  const color = tone === "danger" ? theme.danger : tone === "success" ? theme.success : theme.sub;
-  return (
-    <div style={{ background: bg, color, borderRadius: 12, padding: "10px 12px", border: `1px solid ${theme.border}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>
-        {icon}
-        {label}
-      </div>
-      <div style={{ marginTop: 4, fontSize: 18, fontWeight: 700 }}>{value}</div>
-    </div>
-  );
-}
+const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" };
+const tabs = ["actions", "inventory", "crafting", "stats"];
+const labels = { herb: "Herb", fang: "Fang", essence: "Essence", potion: "Potion" };
 
 function getQuerySessionId() {
   const u = new URL(window.location.href);
@@ -71,32 +45,53 @@ function defaultWsUrl() {
   return localStorage.getItem("tt_server_ws") || `ws://${host}:3000`;
 }
 
+function pct(hp, maxHp) {
+  const m = Math.max(1, Number(maxHp) || 1);
+  return `${Math.max(0, Math.min(100, ((Number(hp) || 0) / m) * 100))}%`;
+}
+
+function recipeText(obj = {}) {
+  return Object.entries(obj).map(([k, v]) => `${v} ${labels[k] || k}`).join(" + ");
+}
+
+function dropsText(obj = {}) {
+  const parts = Object.entries(obj || {}).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${v} ${labels[k] || k}`);
+  return parts.length ? parts.join(" | ") : "None";
+}
+
 export default function App() {
   const [wsUrl, setWsUrl] = useState(defaultWsUrl());
   const [status, setStatus] = useState("disconnected");
-  const [clientId, setClientId] = useState(null);
   const [error, setError] = useState(null);
+  const [clientId, setClientId] = useState(null);
 
   const [playerName, setPlayerName] = useState(localStorage.getItem("tt_player_name") || "");
   const [seat, setSeat] = useState(1);
   const [joined, setJoined] = useState(false);
   const [player, setPlayer] = useState(null);
   const [privateState, setPrivateState] = useState(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [damageFx, setDamageFx] = useState(null);
-  const [incomingDamageFx, setIncomingDamageFx] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [tab, setTab] = useState("actions");
+
+  const [attackTarget, setAttackTarget] = useState("");
+  const [spellTarget, setSpellTarget] = useState("");
+  const [reviveTarget, setReviveTarget] = useState("");
+
+  const [hitFx, setHitFx] = useState(null);
+  const [incomingFx, setIncomingFx] = useState(null);
+  const [lootFx, setLootFx] = useState(null);
 
   const resumeToken = useMemo(() => localStorage.getItem("tt_resume_token") || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
 
   const wsRef = useRef(null);
-  const seenDamageAtRef = useRef(0);
-  const seenEnemyDamageAtRef = useRef(0);
+  const seenHit = useRef(0);
+  const seenIncoming = useRef(0);
+  const seenLoot = useRef(0);
 
   useEffect(() => {
     setError(null);
     setStatus("connecting");
-
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -108,13 +103,13 @@ export default function App() {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.t === MsgType.OK && msg.id === "hello-phone") {
-          setClientId(msg.payload?.clientId ?? null);
-        } else if (msg.t === MsgType.OK && msg.id === "join") {
+        if (msg.t === MsgType.OK && msg.id === "hello-phone") setClientId(msg.payload?.clientId ?? null);
+        if (msg.t === MsgType.OK && msg.id === "join") {
           const token = msg.payload?.resumeToken;
           if (token) localStorage.setItem("tt_resume_token", token);
           if (msg.payload?.seat) setJoined(true);
-        } else if (msg.t === MsgType.STATE_PRIVATE) {
+        }
+        if (msg.t === MsgType.STATE_PRIVATE) {
           const st = msg.payload?.state ?? null;
           setPrivateState(st);
           if (st?.player) {
@@ -124,7 +119,8 @@ export default function App() {
             setJoined(false);
             setPlayer(null);
           }
-        } else if (msg.t === MsgType.ERROR) {
+        }
+        if (msg.t === MsgType.ERROR) {
           const m = msg.payload?.message ?? "Unknown error";
           const sn = msg.payload?.snippet;
           if (msg.payload?.code === "KICKED" || msg.payload?.code === "CAMPAIGN_RESET") {
@@ -138,19 +134,22 @@ export default function App() {
         // ignore
       }
     };
-
     ws.onclose = () => setStatus("disconnected");
     ws.onerror = () => setStatus("error");
 
     return () => {
-      try { ws.close(); } catch {}
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
     };
   }, [wsUrl, resumeToken, sessionId]);
 
   function reconnect() {
     localStorage.setItem("tt_server_ws", wsUrl);
     setWsUrl(wsUrl.trim());
-    setSettingsOpen(false);
+    setMenuOpen(false);
   }
 
   function doJoin() {
@@ -159,20 +158,17 @@ export default function App() {
     const name = playerName.trim().slice(0, 32);
     if (!name) return setError("Enter a player name.");
     localStorage.setItem("tt_player_name", name);
-
     if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
     ws.send(JSON.stringify(makeMsg(MsgType.JOIN, { playerName: name, seat: Number(seat) || undefined }, "join")));
   }
 
-  function sendMove(toX, toY) {
-    setError(null);
+  function sendMove(x, y) {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
-    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.MOVE, params: { toX, toY } }, "move")));
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action: ActionType.MOVE, params: { toX: x, toY: y } }, "move")));
   }
 
   function sendAction(action, params = {}) {
-    setError(null);
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return setError("Not connected to server.");
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params }, "act")));
@@ -181,515 +177,268 @@ export default function App() {
   const g = privateState?.game || null;
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
-  const enemies = g?.enemies || (g?.enemy ? [g.enemy] : []);
-  const livingEnemies = enemies.filter((e) => e && e.hp > 0);
-  const terrainSeed = g?.terrain?.seed ?? 0;
-  const heroesPublic = g?.heroesPublic || [];
+  const rules = g?.rules || {};
   const apRemaining = g?.apRemaining ?? 0;
   const apMax = g?.apMax ?? 4;
   const allowed = new Set(g?.allowedActions || []);
   const rpg = g?.rpg || null;
   const inventory = rpg?.inventory || {};
+  const heroesPublic = g?.heroesPublic || [];
+  const reviveTargets = g?.reviveTargets || [];
   const spellName = rpg?.spell?.name || "Arc Bolt";
-  const weaponName = rpg?.weapon?.name || "Weapon";
-  const canCastSpell = allowed.has(ActionType.CAST_SPELL);
-  const canCraftPotion = allowed.has(ActionType.CRAFT_ITEM);
-  const canUsePotion = allowed.has(ActionType.USE_ITEM);
-  const noActionOptions =
-    apRemaining <= 0 &&
-    !allowed.has(ActionType.MOVE) &&
-    !allowed.has(ActionType.CAST_SPELL) &&
-    !allowed.has(ActionType.CRAFT_ITEM) &&
-    !allowed.has(ActionType.USE_ITEM);
-  const lastLoot = g?.lastLoot || null;
+  const attackRange = Math.max(1, Number(rules.attackRange) || 1);
+  const spellRange = Math.max(1, Number(rpg?.spell?.range) || Number(rules.spellRange) || 3);
+  const craftingOptions = Array.isArray(g?.craftingOptions) ? g.craftingOptions : [];
 
+  const enemies = g?.enemies || (g?.enemy ? [g.enemy] : []);
+  const visibleEnemies = hero ? enemies.filter((e) => e && e.hp > 0 && manhattan(hero, e) <= 8) : [];
+  const attackable = hero ? visibleEnemies.filter((e) => manhattan(hero, e) <= attackRange) : [];
+  const spellable = hero ? visibleEnemies.filter((e) => manhattan(hero, e) <= spellRange) : [];
+
+  useEffect(() => {
+    setAttackTarget((curr) => (attackable.some((e) => e.id === curr) ? curr : attackable[0]?.id || ""));
+  }, [attackable]);
+  useEffect(() => {
+    setSpellTarget((curr) => (spellable.some((e) => e.id === curr) ? curr : spellable[0]?.id || ""));
+  }, [spellable]);
+  useEffect(() => {
+    setReviveTarget((curr) => (reviveTargets.some((e) => e.playerId === curr) ? curr : reviveTargets[0]?.playerId || ""));
+  }, [reviveTargets]);
+
+  useEffect(() => {
+    const hit = g?.lastHeroDamage;
+    if (!hit?.at || hit.at <= seenHit.current) return;
+    seenHit.current = hit.at;
+    setHitFx(hit);
+    const t = setTimeout(() => setHitFx((v) => (v?.at === hit.at ? null : v)), 1200);
+    return () => clearTimeout(t);
+  }, [g]);
+  useEffect(() => {
+    const dmg = g?.lastEnemyDamage;
+    if (!dmg?.at || dmg.at <= seenIncoming.current) return;
+    seenIncoming.current = dmg.at;
+    setIncomingFx(dmg);
+    const t = setTimeout(() => setIncomingFx((v) => (v?.at === dmg.at ? null : v)), 3900);
+    return () => clearTimeout(t);
+  }, [g]);
+  useEffect(() => {
+    const loot = g?.lastLoot;
+    if (!loot?.at || loot.at <= seenLoot.current) return;
+    seenLoot.current = loot.at;
+    setLootFx(loot);
+    const t = setTimeout(() => setLootFx((v) => (v?.at === loot.at ? null : v)), 7800);
+    return () => clearTimeout(t);
+  }, [g]);
+
+  const terrainSeed = g?.terrain?.seed ?? 0;
   const occupied = new Set();
-  for (const h of heroesPublic) {
-    if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
-  }
-  for (const enemyUnit of livingEnemies) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
+  for (const h of heroesPublic) if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
+  for (const e of visibleEnemies) occupied.add(`${e.x},${e.y}`);
+  const lootByCell = new Map((g?.groundLoot || []).map((l) => [`${l.x},${l.y}`, l]));
+  const canMove = allowed.has(ActionType.MOVE) && active && apRemaining > 0;
+  const neighbors = active && hero && hero.hp > 0
+    ? hexNeighbors(hero.x, hero.y).map((c) => {
+        const t = terrainAt(c.x, c.y, terrainSeed);
+        return { ...c, t, loot: lootByCell.get(`${c.x},${c.y}`) || null, canMove: canMove && t.passable && !occupied.has(`${c.x},${c.y}`) };
+      })
+    : [];
 
-  const canSpendMove = allowed.has(ActionType.MOVE) && apRemaining > 0;
-  const neighborCells =
-    active && hero && hero.hp > 0 && (canSpendMove || Boolean(damageFx))
-      ? hexNeighbors(hero.x, hero.y).map((c) => {
-          const terrain = terrainAt(c.x, c.y, terrainSeed);
-          return {
-            x: c.x,
-            y: c.y,
-            terrain,
-            canMove: canSpendMove && terrain.passable && !occupied.has(`${c.x},${c.y}`)
-          };
-        })
-      : [];
-  const heroTerrain = hero ? terrainAt(hero.x, hero.y, terrainSeed) : null;
-
-  const MINI_HEX_W = 70;
-  const MINI_HEX_H = 60;
-  const MINI_HEX_POINTS = `${MINI_HEX_W * 0.25},0 ${MINI_HEX_W * 0.75},0 ${MINI_HEX_W},${MINI_HEX_H * 0.5} ${MINI_HEX_W * 0.75},${MINI_HEX_H} ${MINI_HEX_W * 0.25},${MINI_HEX_H} 0,${MINI_HEX_H * 0.5}`;
-
-  const statusTone = status === "connected"
-    ? { bg: "rgba(76, 214, 138, 0.18)", color: theme.success }
-    : status === "error"
-      ? { bg: "rgba(255, 107, 107, 0.18)", color: theme.danger }
-      : { bg: "rgba(157, 176, 195, 0.16)", color: theme.sub };
-
-  useEffect(() => {
-    const hit = privateState?.game?.lastHeroDamage;
-    if (!hit?.at || hit.at <= seenDamageAtRef.current) return;
-    seenDamageAtRef.current = hit.at;
-    const fx = { id: hit.at, enemyId: hit.enemyId || null, amount: hit.amount, enemyHp: hit.enemyHp, enemyMaxHp: hit.enemyMaxHp };
-    setDamageFx(fx);
-    const t = setTimeout(() => {
-      setDamageFx((curr) => (curr && curr.id === fx.id ? null : curr));
-    }, 950);
-    return () => clearTimeout(t);
-  }, [privateState]);
-
-  useEffect(() => {
-    const incoming = privateState?.game?.lastEnemyDamage;
-    if (!incoming?.at || incoming.at <= seenEnemyDamageAtRef.current) return;
-    seenEnemyDamageAtRef.current = incoming.at;
-    const fx = {
-      id: incoming.at,
-      amount: incoming.amount,
-      heroHp: incoming.heroHp,
-      heroMaxHp: incoming.heroMaxHp
-    };
-    setIncomingDamageFx(fx);
-    const t = setTimeout(() => {
-      setIncomingDamageFx((curr) => (curr && curr.id === fx.id ? null : curr));
-    }, 1300);
-    return () => clearTimeout(t);
-  }, [privateState]);
+  const W = 72;
+  const H = 60;
+  const P = `${W * 0.25},0 ${W * 0.75},0 ${W},${H * 0.5} ${W * 0.75},${H} ${W * 0.25},${H} 0,${H * 0.5}`;
+  const topBadge = status === "connected" ? theme.good : status === "error" ? theme.bad : theme.sub;
 
   return (
-    <div style={shellStyle}>
-      <div style={{ maxWidth: 760, margin: "0 auto" }}>
-        <style>{`
-          @keyframes phoneEnemyHitShake {
-            0%, 100% { transform: translateX(0); }
-            20% { transform: translateX(-2px); }
-            40% { transform: translateX(2px); }
-            60% { transform: translateX(-2px); }
-            80% { transform: translateX(2px); }
-          }
-          @keyframes phoneHitFloat {
-            0% { transform: translate(-50%, 0) scale(0.9); opacity: 0; }
-            18% { transform: translate(-50%, -6px) scale(1); opacity: 1; }
-            100% { transform: translate(-50%, -26px) scale(1); opacity: 0; }
-          }
-          @keyframes phoneHeroHitFlash {
-            0% { opacity: 0; transform: translateY(4px); }
-            20% { opacity: 1; transform: translateY(0); }
-            100% { opacity: 0; transform: translateY(-8px); }
-          }
-        `}</style>
-        <div style={{ ...cardStyle, padding: 12, position: "relative", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg, #1b2430, #141c26)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.2 }}>Dungeon Phone Console</div>
+    <div style={shell}>
+      <div style={{ maxWidth: 720, margin: "0 auto", paddingBottom: joined ? 82 : 8 }}>
+        <div style={{ ...card, position: "relative", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <strong>Dungeon Phone</strong>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ ...mono, color: topBadge, fontSize: 11 }}>{status}</span>
+            <button onClick={() => setMenuOpen((v) => !v)} style={{ borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.panel, color: theme.text }}>...</button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              onClick={() => {
-                setSettingsOpen((v) => {
-                  const next = !v;
-                  return next;
-                });
-              }}
-              aria-label="Open settings"
-              style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, cursor: "pointer", display: "grid", placeItems: "center" }}
-            >
-              <Icon path="M6 12h.01 M12 12h.01 M18 12h.01" size={18} stroke={theme.sub} strokeWidth={3} />
-            </button>
-          </div>
-
-          {settingsOpen ? (
-            <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", top: 54, width: "min(400px, 80vw)", background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 14, boxShadow: theme.shadow, padding: 12, zIndex: 10 }}>
-              <div style={{ ...mono, fontSize: 12, padding: "6px 10px", borderRadius: 999, background: statusTone.bg, color: statusTone.color, display: "inline-block", marginBottom: 8 }}>
-                {status}
+          {menuOpen ? (
+            <div style={{ position: "absolute", top: 42, right: 0, left: 0, zIndex: 10, ...card, margin: 0 }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={wsUrl} onChange={(e) => setWsUrl(e.target.value)} style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.panel, color: theme.text }} />
+                <button onClick={reconnect} style={{ background: theme.brand, color: "#07201f", border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 700 }}>Reconnect</button>
               </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-                <input
-                  value={wsUrl}
-                  onChange={(e) => setWsUrl(e.target.value)}
-                  style={{ flex: 1, padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, fontSize: 14, background: theme.surfaceAlt, color: theme.text }}
-                />
-                <button
-                  onClick={reconnect}
-                  style={{ padding: "10px 12px", borderRadius: 10, border: "none", background: theme.brand, color: "#fff", fontWeight: 700, cursor: "pointer" }}
-                >
-                  Reconnect
-                </button>
-              </div>
-              <button
-                onClick={() => {
-                  setSettingsOpen(false);
-                }}
-                style={{ marginTop: 10, width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text, fontWeight: 600, cursor: "pointer" }}
-              >
-                Close Menu
-              </button>
             </div>
           ) : null}
         </div>
-        <div style={{ height: 2 }} />
 
         {!joined ? (
-          <div style={cardStyle}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontWeight: 700 }}>
-              <Icon path="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M4 20a8 8 0 0 1 16 0" stroke={theme.brandDark} />
-              Join Seat
+          <div style={card}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 8 }}>
+              <input value={playerName} placeholder="Your name" onChange={(e) => setPlayerName(e.target.value)} style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.panel, color: theme.text }} />
+              <input type="number" min="1" max="6" value={seat} onChange={(e) => setSeat(e.target.value)} style={{ padding: 10, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.panel, color: theme.text }} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 8 }}>
-              <input
-                placeholder="Your name"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text }}
-              />
-              <input
-                type="number"
-                min="1"
-                max="6"
-                value={seat}
-                onChange={(e) => setSeat(e.target.value)}
-                style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.surfaceAlt, color: theme.text }}
-              />
-            </div>
-            <button
-              onClick={doJoin}
-              style={{ marginTop: 10, width: "100%", padding: 12, borderRadius: 12, border: "none", background: theme.brand, color: "#081316", fontWeight: 800, cursor: "pointer" }}
-            >
-              Enter Dungeon
-            </button>
+            <button onClick={doJoin} style={{ width: "100%", marginTop: 8, background: theme.brand, color: "#07201f", border: "none", borderRadius: 8, padding: 10, fontWeight: 800 }}>Enter Dungeon</button>
           </div>
         ) : (
           <>
-            <div style={cardStyle}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 18 }}>{player?.playerName || "Player"}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ padding: "6px 10px", borderRadius: 999, fontWeight: 700, fontSize: 12, background: active ? "rgba(76, 214, 138, 0.18)" : "rgba(157, 176, 195, 0.16)", color: active ? theme.success : theme.sub }}>
-                    {active ? "YOUR TURN" : "WAITING"}
-                  </div>
-                  <button
-                    disabled={!active || !allowed.has(ActionType.END_TURN)}
-                    onClick={() => sendAction(ActionType.END_TURN)}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: 10,
-                      border: "none",
-                      background: !active || !allowed.has(ActionType.END_TURN) ? "#2a3541" : "#d08a2f",
-                      color: !active || !allowed.has(ActionType.END_TURN) ? "#9aa8b6" : "#221507",
-                      fontWeight: 800,
-                      cursor: !active || !allowed.has(ActionType.END_TURN) ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    End Turn
-                  </button>
+            <div style={{ ...card, position: "sticky", top: 8, zIndex: 6, background: "rgba(20, 32, 49, 0.97)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800 }}>{player?.playerName || "Player"}</div>
+                  <div style={{ marginTop: 3, fontSize: 12, color: theme.sub }}>HP {hero ? `${hero.hp}/${hero.maxHp}` : "-"} | AP {apRemaining}/{apMax} | Lv {rpg?.level || "-"}</div>
                 </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-                <StatTile
-                  icon={<Icon path="M12 21s-7-4.5-7-10a7 7 0 0 1 14 0c0 5.5-7 10-7 10z" stroke={theme.danger} />}
-                  label="HP"
-                  value={hero ? `${hero.hp}/${hero.maxHp}` : "-"}
-                  tone="danger"
-                />
-                <StatTile
-                  icon={<Icon path="M13 2L5 14h6l-1 8 8-12h-6z" stroke={theme.brandDark} />}
-                  label="Action"
-                  value={`${apRemaining}/${apMax}`}
-                />
-                <StatTile
-                  icon={<Icon path="M12 3l3 6 6 .9-4.4 4.3 1 6.1L12 17l-5.6 3.3 1-6.1L3 9.9l6-.9z" stroke={theme.brandDark} />}
-                  label="Level"
-                  value={rpg ? `Lv ${rpg.level}` : "-"}
-                />
-                <StatTile
-                  icon={<Icon path="M3 12h18 M12 3v18" stroke="#f0c86a" />}
-                  label="Gold"
-                  value={rpg ? `${rpg.gold}` : "-"}
-                  tone="success"
-                />
-              </div>
-              {rpg ? (
-                <div style={{ marginTop: 8, color: theme.sub, fontSize: 12 }}>
-                  XP: <span style={{ ...mono, color: theme.text }}>{rpg.xp}/{rpg.xpToNext}</span> | Weapon:{" "}
-                  <span style={{ color: theme.text, fontWeight: 700 }}>{weaponName}</span>
-                </div>
-              ) : null}
-              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
-                  Herb: <strong style={{ color: theme.text }}>{inventory.herb || 0}</strong>
-                </span>
-                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
-                  Fang: <strong style={{ color: theme.text }}>{inventory.fang || 0}</strong>
-                </span>
-                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
-                  Essence: <strong style={{ color: theme.text }}>{inventory.essence || 0}</strong>
-                </span>
-                <span style={{ border: `1px solid ${theme.border}`, borderRadius: 999, padding: "4px 8px", fontSize: 12, color: theme.sub }}>
-                  Potion: <strong style={{ color: theme.text }}>{inventory.potion || 0}</strong>
-                </span>
-              </div>
-              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
-                <button
-                  disabled={!active || !canCastSpell}
-                  onClick={() => sendAction(ActionType.CAST_SPELL)}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: !active || !canCastSpell ? "#2a3541" : "#3b6eb2",
-                    color: !active || !canCastSpell ? "#9aa8b6" : "#eef6ff",
-                    fontWeight: 800,
-                    cursor: !active || !canCastSpell ? "not-allowed" : "pointer"
-                  }}
-                >
-                  {spellName}
-                </button>
-                <button
-                  disabled={!active || !canCraftPotion}
-                  onClick={() => sendAction(ActionType.CRAFT_ITEM, { recipeId: "potion_minor" })}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: !active || !canCraftPotion ? "#2a3541" : "#2f7e62",
-                    color: !active || !canCraftPotion ? "#9aa8b6" : "#e8fff5",
-                    fontWeight: 800,
-                    cursor: !active || !canCraftPotion ? "not-allowed" : "pointer"
-                  }}
-                >
-                  Craft Potion
-                </button>
-                <button
-                  disabled={!active || !canUsePotion}
-                  onClick={() => sendAction(ActionType.USE_ITEM, { itemId: "potion" })}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: !active || !canUsePotion ? "#2a3541" : "#a05b2a",
-                    color: !active || !canUsePotion ? "#9aa8b6" : "#fff1e8",
-                    fontWeight: 800,
-                    cursor: !active || !canUsePotion ? "not-allowed" : "pointer"
-                  }}
-                >
-                  Drink Potion
+                <button disabled={!active || !allowed.has(ActionType.END_TURN)} onClick={() => sendAction(ActionType.END_TURN)} style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: !active ? "#314255" : "#d18d2f", color: !active ? "#9fb1c5" : "#2a1908" }}>
+                  End Turn
                 </button>
               </div>
-              {lastLoot ? (
-                <div style={{ marginTop: 10, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 10px", background: "rgba(24, 34, 46, 0.92)", color: theme.sub, fontSize: 12 }}>
-                  Looted from {lastLoot.enemyName}: +{lastLoot.xp} XP, +{lastLoot.gold}g
-                </div>
-              ) : null}
-              {incomingDamageFx ? (
-                <div
-                  style={{
-                    marginTop: 10,
-                    borderRadius: 10,
-                    border: "1px solid rgba(255, 107, 107, 0.45)",
-                    background: "rgba(60, 24, 28, 0.85)",
-                    color: "#ffd3d3",
-                    fontWeight: 800,
-                    padding: "8px 10px",
-                    textAlign: "center",
-                    animation: "phoneHeroHitFlash 1.3s ease-out forwards"
-                  }}
-                >
-                  You were hit for {incomingDamageFx.amount}. HP {incomingDamageFx.heroHp}/{incomingDamageFx.heroMaxHp}
-                </div>
-              ) : null}
             </div>
 
-            <div style={cardStyle}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontWeight: 700 }}>
-                <Icon path="M4 20l8-16 8 16" stroke={theme.brandDark} />
-                Move, Attack, and Skills
-              </div>
+            {hitFx ? <div style={{ ...card, borderColor: "#6b3a3a", color: "#ffd6d6" }}>Hit for {hitFx.amount}. Enemy {hitFx.enemyHp}/{hitFx.enemyMaxHp}</div> : null}
+            {incomingFx ? <div style={{ ...card, borderColor: "#6b3a3a", color: "#ffd6d6" }}>You were hit for {incomingFx.amount}. HP {incomingFx.heroHp}/{incomingFx.heroMaxHp}</div> : null}
 
-              {livingEnemies.length ? (
-                <div style={{ marginBottom: 10, display: "grid", gap: 6 }}>
-                  {livingEnemies.map((enemyUnit) => (
-                    <div
-                      key={enemyUnit.id}
-                      style={{
-                        border: `1px solid ${theme.border}`,
-                        borderRadius: 10,
-                        background: "rgba(46, 24, 30, 0.7)",
-                        padding: "6px 8px"
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd7d7" }}>
-                          {enemyUnit.name || "Enemy"} {enemyUnit.level ? `(Lv ${enemyUnit.level})` : ""}
+            {tab === "actions" ? (
+              <>
+                <div style={card}>
+                  <div style={{ color: theme.sub, fontSize: 12, marginBottom: 6 }}>Move on green. Red hex attacks adjacent enemy.</div>
+                  <div style={{ position: "relative", width: 264, height: 220, margin: "0 auto" }}>
+                    <div style={{ position: "absolute", left: 96, top: 80, width: W, height: H, display: "grid", placeItems: "center", fontWeight: 800 }}>YOU</div>
+                    {neighbors.map((c) => {
+                      const xStep = W * 0.75;
+                      const yStep = H;
+                      const left = 96 + (c.x - hero.x) * xStep;
+                      const top = 80 + (c.y - hero.y) * yStep + ((c.x % 2 ? yStep / 2 : 0) - (hero.x % 2 ? yStep / 2 : 0));
+                      const enemy = visibleEnemies.find((e) => e.x === c.x && e.y === c.y) || null;
+                      const canAttack = Boolean(enemy && active && allowed.has(ActionType.ATTACK));
+                      const tap = c.canMove || canAttack;
+                      const bg = enemy ? "#472731" : c.canMove ? "#1b3b2a" : c.t.passable ? c.t.fill : "#1d2734";
+                      const stroke = enemy ? "#c57784" : c.canMove ? "#5cb882" : c.t.stroke;
+                      return (
+                        <button key={`${c.x},${c.y}`} disabled={!tap} onClick={() => (canAttack ? sendAction(ActionType.ATTACK, { targetEnemyId: enemy.id }) : sendMove(c.x, c.y))} style={{ position: "absolute", left, top, width: W, height: H, border: "none", background: "transparent", padding: 0, cursor: tap ? "pointer" : "default", color: enemy ? theme.bad : c.canMove ? theme.good : theme.sub, fontWeight: 800, fontSize: 11 }}>
+                          <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}><polygon points={P} fill={bg} stroke={stroke} strokeWidth="1.2" /></svg>
+                          <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
+                            <div>{enemy ? "EN" : c.canMove ? "GO" : ""}</div>
+                            {enemy ? <div style={{ fontSize: 9 }}>{enemy.hp}/{enemy.maxHp}</div> : null}
+                            {c.loot && c.canMove ? <div style={{ marginTop: 1, fontSize: 10 }}>[]</div> : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={card}>
+                  <div style={{ marginBottom: 8, fontWeight: 700 }}>Targets (only monsters within 8 hexes shown)</div>
+                  <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+                    {visibleEnemies.length ? visibleEnemies.map((e) => (
+                      <div key={e.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 7, background: theme.panel }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                          <strong>{e.name} {e.level ? `(Lv ${e.level})` : ""}</strong>
+                          <span style={mono}>{e.hp}/{e.maxHp}</span>
                         </div>
-                        <div style={{ ...mono, fontSize: 12, color: "#ffb7b7", fontWeight: 800 }}>
-                          HP {enemyUnit.hp}/{enemyUnit.maxHp}
+                        <div style={{ marginTop: 4, height: 6, borderRadius: 99, overflow: "hidden", border: `1px solid ${theme.border}`, background: "#0e141c" }}>
+                          <div style={{ width: pct(e.hp, e.maxHp), height: "100%", background: "linear-gradient(90deg,#ff9a9a,#ff5757)" }} />
                         </div>
+                        <div style={{ marginTop: 3, fontSize: 11, color: theme.sub }}>Distance {hero ? manhattan(hero, e) : "?"}</div>
                       </div>
-                      <div style={{ marginTop: 5, height: 6, borderRadius: 999, background: "rgba(15, 20, 27, 0.95)", overflow: "hidden", border: "1px solid rgba(255,255,255,0.16)" }}>
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${Math.max(0, Math.min(100, (enemyUnit.hp / Math.max(1, enemyUnit.maxHp)) * 100))}%`,
-                            background: "linear-gradient(90deg, #ff8b8b, #ff4f4f)"
-                          }}
-                        />
+                    )) : <div style={{ color: theme.sub }}>No monsters in range.</div>}
+                  </div>
+
+                  <div style={{ fontSize: 12, color: theme.sub }}>Weapon target (range {attackRange})</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
+                    {attackable.map((e) => <button key={e.id} onClick={() => setAttackTarget(e.id)} style={{ padding: "5px 8px", borderRadius: 8, border: `1px solid ${attackTarget === e.id ? "#cc7784" : theme.border}`, background: attackTarget === e.id ? "#5a2e38" : theme.panel, color: attackTarget === e.id ? "#ffe0e6" : theme.sub }}>{e.name}</button>)}
+                    {!attackable.length ? <span style={{ color: theme.sub, fontSize: 12 }}>No melee targets.</span> : null}
+                  </div>
+                  <button disabled={!active || !allowed.has(ActionType.ATTACK) || !attackTarget} onClick={() => sendAction(ActionType.ATTACK, { targetEnemyId: attackTarget })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#a03d4f", color: "#ffeef1" }}>
+                    Attack
+                  </button>
+
+                  <div style={{ fontSize: 12, color: theme.sub, marginTop: 8 }}>Spell target (range {spellRange})</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
+                    {spellable.map((e) => <button key={e.id} onClick={() => setSpellTarget(e.id)} style={{ padding: "5px 8px", borderRadius: 8, border: `1px solid ${spellTarget === e.id ? "#6fa5e5" : theme.border}`, background: spellTarget === e.id ? "#2a4d7f" : theme.panel, color: spellTarget === e.id ? "#e2efff" : theme.sub }}>{e.name}</button>)}
+                    {!spellable.length ? <span style={{ color: theme.sub, fontSize: 12 }}>No spell targets.</span> : null}
+                  </div>
+                  <button disabled={!active || !allowed.has(ActionType.CAST_SPELL) || !spellTarget} onClick={() => sendAction(ActionType.CAST_SPELL, { targetEnemyId: spellTarget })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#3a6fb7", color: "#edf5ff" }}>
+                    Cast {spellName}
+                  </button>
+
+                  <div style={{ fontSize: 12, color: theme.sub, marginTop: 8 }}>Revive</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
+                    {reviveTargets.map((t) => <button key={t.playerId} onClick={() => setReviveTarget(t.playerId)} style={{ padding: "5px 8px", borderRadius: 8, border: `1px solid ${reviveTarget === t.playerId ? "#8ac56f" : theme.border}`, background: reviveTarget === t.playerId ? "#32582a" : theme.panel, color: reviveTarget === t.playerId ? "#e3f7d9" : theme.sub }}>{t.playerName || "Ally"} ({t.distance})</button>)}
+                    {!reviveTargets.length ? <span style={{ color: theme.sub, fontSize: 12 }}>No downed ally in range.</span> : null}
+                  </div>
+                  <button disabled={!active || !allowed.has(ActionType.REVIVE) || !reviveTarget} onClick={() => sendAction(ActionType.REVIVE, { targetPlayerId: reviveTarget })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#4f7d32", color: "#efffe7" }}>
+                    Revive Target
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {tab === "inventory" ? (
+              <div style={card}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, fontSize: 12 }}>
+                  <span>Herb <strong>{inventory.herb || 0}</strong></span>
+                  <span>Fang <strong>{inventory.fang || 0}</strong></span>
+                  <span>Essence <strong>{inventory.essence || 0}</strong></span>
+                  <span>Potion <strong>{inventory.potion || 0}</strong></span>
+                </div>
+                <button disabled={!active || !allowed.has(ActionType.USE_ITEM)} onClick={() => sendAction(ActionType.USE_ITEM, { itemId: "potion" })} style={{ width: "100%", border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#9d5a2b", color: "#fff0e6" }}>
+                  Drink Potion
+                </button>
+                {lootFx ? <div style={{ marginTop: 8, border: `1px solid #66502a`, borderRadius: 8, padding: 8, color: "#f8e4b4" }}>Loot pickup: +{lootFx.xp} XP, +{lootFx.gold}g, {dropsText(lootFx.drops)}</div> : null}
+              </div>
+            ) : null}
+
+            {tab === "crafting" ? (
+              <div style={card}>
+                {craftingOptions.length ? craftingOptions.map((r) => (
+                  <div key={r.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 8, background: theme.panel, marginBottom: 7 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <strong>{r.label}</strong><span style={{ ...mono, fontSize: 12, color: theme.sub }}>AP {r.apCost}</span>
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Cost: {recipeText(r.requires)}</div>
+                    <div style={{ marginTop: 2, fontSize: 12, color: theme.sub }}>Result: {recipeText(r.yields)}</div>
+                    <button disabled={!active || !allowed.has(ActionType.CRAFT_ITEM) || !r.canCraft} onClick={() => sendAction(ActionType.CRAFT_ITEM, { recipeId: r.id })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 8, fontWeight: 800, background: "#2f7a61", color: "#e9fff6" }}>
+                      Craft
+                    </button>
+                  </div>
+                )) : <div style={{ color: theme.sub }}>No recipes unlocked yet.</div>}
+                <div style={{ marginTop: 6, fontSize: 12, color: theme.sub }}>More recipes will be added here.</div>
+              </div>
+            ) : null}
+
+            {tab === "stats" ? (
+              <div style={card}>
+                <div style={{ fontSize: 12, color: theme.sub }}>XP {rpg?.xp || 0}/{rpg?.xpToNext || 0} | Gold {rpg?.gold || 0}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Weapon {rpg?.weapon?.name || "-"} | Spell {rpg?.spell?.name || "-"}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Client {clientId || "-"}</div>
+                <div style={{ marginTop: 8, fontWeight: 700 }}>Party</div>
+                <div style={{ display: "grid", gap: 6, marginTop: 5 }}>
+                  {heroesPublic.map((h) => (
+                    <div key={h.ownerPlayerId} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 7, background: theme.panel }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                        <strong>{h.ownerPlayerName || "Player"} {h.ownerPlayerId === player?.playerId ? "(You)" : ""}</strong>
+                        <span>Lv {h.level || 1}</span>
                       </div>
+                      <div style={{ marginTop: 4, height: 6, borderRadius: 99, overflow: "hidden", background: "#0e141c", border: `1px solid ${theme.border}` }}>
+                        <div style={{ width: pct(h.hp, h.maxHp), height: "100%", background: "linear-gradient(90deg,#ff9595,#ff5959)" }} />
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: 11, color: theme.sub }}>{h.hp}/{h.maxHp} | ({h.x},{h.y})</div>
                     </div>
                   ))}
                 </div>
-              ) : null}
-
-              {!active || !hero ? (
-                <p style={{ marginBottom: 0, color: theme.sub }}>Wait for your turn.</p>
-              ) : noActionOptions && !damageFx ? (
-                <p style={{ marginBottom: 0, color: theme.sub }}>No actions remaining. End turn to refresh.</p>
-              ) : (
-                <>
-                  <div style={{ ...mono, color: theme.sub, marginBottom: 10, fontSize: 12 }}>
-                    Tap green to move. Tap red enemy to attack with your weapon.
-                  </div>
-
-                  <div style={{ position: "relative", width: 260, height: 220, margin: "0 auto" }}>
-                    <div style={{ position: "absolute", left: 95, top: 80, width: MINI_HEX_W, height: MINI_HEX_H, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#cfe3f7" }}>
-                      <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
-                        <polygon points={MINI_HEX_POINTS} fill={heroTerrain?.fill || "#1a2430"} stroke={heroTerrain?.stroke || "#3a4b5e"} strokeWidth="1.2" />
-                        {heroTerrain ? <polygon points={MINI_HEX_POINTS} fill={heroTerrain.accent} opacity={0.2} /> : null}
-                      </svg>
-                      <div style={{ position: "relative" }}>YOU</div>
-                    </div>
-
-                    {(() => {
-                      const xStep = MINI_HEX_W * 0.75;
-                      const yStep = MINI_HEX_H;
-                      const centerLeft = 95;
-                      const centerTop = 80;
-                      const heroParityOffset = (hero.x % 2 === 0) ? 0 : (yStep / 2);
-
-                      return neighborCells.map((c) => {
-                        const cParityOffset = (c.x % 2 === 0) ? 0 : (yStep / 2);
-                        const left = centerLeft + ((c.x - hero.x) * xStep);
-                        const top = centerTop + ((c.y - hero.y) * yStep) + (cParityOffset - heroParityOffset);
-
-                        const enemyHere = livingEnemies.find((e) => e.x === c.x && e.y === c.y) || null;
-                        const hasEnemy = Boolean(enemyHere);
-                        const otherHero = heroesPublic.find((h) => h.hp > 0 && h.x === c.x && h.y === c.y);
-                        const canAttack = Boolean(hasEnemy && allowed.has(ActionType.ATTACK));
-                        const canTap = c.canMove || canAttack;
-                        const showDamageFx = Boolean(hasEnemy && damageFx && (!damageFx.enemyId || damageFx.enemyId === enemyHere.id));
-                        const terrain = c.terrain;
-                        const blockedTerrain = !terrain.passable;
-
-                        const bg = hasEnemy
-                          ? "#3a1b1f"
-                          : otherHero
-                            ? "#1b222c"
-                            : blockedTerrain
-                              ? "#1a212b"
-                              : c.canMove
-                                ? "#173023"
-                                : terrain.fill;
-
-                        const stroke = hasEnemy ? "#b85b5b" : c.canMove ? "#4da06a" : terrain.stroke;
-                        const label = hasEnemy ? "EN" : otherHero ? "AL" : blockedTerrain ? "X" : c.canMove ? "GO" : "";
-
-                        return (
-                          <button
-                            key={`${c.x},${c.y}`}
-                            disabled={!canTap}
-                            onClick={() => (canAttack ? sendAction(ActionType.ATTACK) : sendMove(c.x, c.y))}
-                            style={{
-                              position: "absolute",
-                              left,
-                              top,
-                              width: MINI_HEX_W,
-                              height: MINI_HEX_H,
-                              border: "none",
-                              background: "transparent",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              padding: 0,
-                              fontWeight: 800,
-                              fontSize: 12,
-                              letterSpacing: 0.6,
-                              color: hasEnemy ? theme.danger : c.canMove ? theme.success : theme.sub,
-                              opacity: (hasEnemy || otherHero || c.canMove || blockedTerrain) ? 1 : 0.55,
-                              cursor: canTap ? "pointer" : "default",
-                              transformOrigin: "50% 50%",
-                              animation: showDamageFx ? "phoneEnemyHitShake 0.35s ease-in-out" : "none"
-                            }}
-                          >
-                            <svg width={MINI_HEX_W} height={MINI_HEX_H} viewBox={`0 0 ${MINI_HEX_W} ${MINI_HEX_H}`} aria-hidden="true" style={{ position: "absolute", inset: 0 }}>
-                              <polygon points={MINI_HEX_POINTS} fill={bg} stroke={stroke} strokeWidth="1.2" />
-                              {!hasEnemy && !otherHero ? <polygon points={MINI_HEX_POINTS} fill={terrain.accent} opacity={0.18} /> : null}
-                              {blockedTerrain ? (
-                                <>
-                                  <line x1={MINI_HEX_W * 0.28} y1={MINI_HEX_H * 0.22} x2={MINI_HEX_W * 0.72} y2={MINI_HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
-                                  <line x1={MINI_HEX_W * 0.72} y1={MINI_HEX_H * 0.22} x2={MINI_HEX_W * 0.28} y2={MINI_HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
-                                </>
-                              ) : null}
-                            </svg>
-                            <div style={{ position: "relative", textAlign: "center", lineHeight: 1.05 }}>
-                              <div>{label}</div>
-                              {hasEnemy ? (
-                                <div style={{ marginTop: 2, fontSize: 9, fontWeight: 900, color: "#ffc9c9", letterSpacing: 0.2 }}>
-                                  {enemyHere.hp}/{enemyHere.maxHp}
-                                </div>
-                              ) : null}
-                            </div>
-                            {showDamageFx ? (
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  left: "50%",
-                                  top: -4,
-                                  background: "rgba(18, 24, 32, 0.95)",
-                                  color: theme.danger,
-                                  border: "1px solid rgba(255, 107, 107, 0.4)",
-                                  borderRadius: 999,
-                                  padding: "2px 8px",
-                                  fontSize: 11,
-                                  fontWeight: 900,
-                                  letterSpacing: 0.3,
-                                  whiteSpace: "nowrap",
-                                  pointerEvents: "none",
-                                  animation: "phoneHitFloat 0.95s ease-out forwards"
-                                }}
-                              >
-                                -{damageFx.amount} ({damageFx.enemyHp}/{damageFx.enemyMaxHp})
-                              </div>
-                            ) : null}
-                          </button>
-                        );
-                      });
-                    })()}
-                  </div>
-
-                  <div style={{ marginTop: 10, textAlign: "center", color: theme.sub }}>
-                    Actions left: <span style={{ ...mono, color: theme.text }}>{apRemaining}/{apMax}</span>
-                  </div>
-                </>
-              )}
-            </div>
+              </div>
+            ) : null}
           </>
         )}
 
-        {error ? (
-          <div style={{ ...cardStyle, borderColor: "#5b2a2a", background: "#2a1416", color: "#f0a0a0", whiteSpace: "pre-wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontWeight: 700 }}>
-              <Icon path="M12 9v4 M12 17h.01 M4.93 19h14.14a2 2 0 0 0 1.74-3L13.74 4a2 2 0 0 0-3.48 0L3.19 16a2 2 0 0 0 1.74 3z" stroke={theme.danger} />
-              Error
-            </div>
-            {error}
-          </div>
-        ) : null}
+        {error ? <div style={{ ...card, color: "#f5aaaa", borderColor: "#6b3737", whiteSpace: "pre-wrap" }}>{error}</div> : null}
       </div>
+
+      {joined ? (
+        <div style={{ position: "fixed", left: "50%", bottom: 9, transform: "translateX(-50%)", width: "min(640px, calc(100vw - 18px))", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, background: "rgba(15, 24, 35, 0.98)", border: `1px solid ${theme.border}`, borderRadius: 12, padding: 5 }}>
+          {tabs.map((t) => (
+            <button key={t} onClick={() => setTab(t)} style={{ border: "none", borderRadius: 8, padding: "9px 6px", textTransform: "capitalize", background: tab === t ? "#234259" : "transparent", color: tab === t ? "#dff2ff" : theme.sub, fontWeight: 800 }}>
+              {t}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

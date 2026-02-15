@@ -244,6 +244,7 @@ export function setupWebSocket(server) {
       game.enemies = game.enemy ? [game.enemy] : [];
       delete game.enemy;
     }
+    if (!Array.isArray(game.groundLoot)) game.groundLoot = [];
     if (!game.scenario) {
       game.scenario = {
         id: "scenario-1",
@@ -265,9 +266,11 @@ export function setupWebSocket(server) {
     for (const [playerId, hero] of Object.entries(game.heroes || {})) {
       const profile = rpgProfileById(playerId);
       const expectedMaxHp = heroMaxHpForLevel(profile.level);
-      hero.maxHp = Math.max(1, Number(hero.maxHp) || expectedMaxHp);
+      const parsedHeroMaxHp = Number(hero.maxHp);
+      hero.maxHp = Math.max(1, Number.isFinite(parsedHeroMaxHp) ? parsedHeroMaxHp : expectedMaxHp);
       if (hero.maxHp < expectedMaxHp) hero.maxHp = expectedMaxHp;
-      hero.hp = clamp(Math.max(0, Number(hero.hp) || hero.maxHp), 0, hero.maxHp);
+      const parsedHeroHp = Number(hero.hp);
+      hero.hp = clamp(Number.isFinite(parsedHeroHp) ? parsedHeroHp : hero.maxHp, 0, hero.maxHp);
       hero.level = profile.level;
     }
 
@@ -275,13 +278,40 @@ export function setupWebSocket(server) {
       const fallback = ENEMY_TEMPLATES.common;
       enemyUnit.tier = typeof enemyUnit.tier === "string" ? enemyUnit.tier : fallback.tier;
       enemyUnit.level = Math.max(1, Number(enemyUnit.level) || fallback.level);
-      enemyUnit.maxHp = Math.max(1, Number(enemyUnit.maxHp) || Number(enemyUnit.hp) || fallback.hp);
-      enemyUnit.hp = clamp(Math.max(0, Number(enemyUnit.hp) || enemyUnit.maxHp), 0, enemyUnit.maxHp);
+      const parsedEnemyMaxHp = Number(enemyUnit.maxHp);
+      const parsedEnemyHp = Number(enemyUnit.hp);
+      enemyUnit.maxHp = Math.max(
+        1,
+        Number.isFinite(parsedEnemyMaxHp)
+          ? parsedEnemyMaxHp
+          : Number.isFinite(parsedEnemyHp)
+            ? parsedEnemyHp
+            : fallback.hp
+      );
+      enemyUnit.hp = clamp(Number.isFinite(parsedEnemyHp) ? parsedEnemyHp : enemyUnit.maxHp, 0, enemyUnit.maxHp);
       enemyUnit.attackPower = Math.max(1, Number(enemyUnit.attackPower) || fallback.attackPower);
       enemyUnit.rewardXp = Math.max(1, Number(enemyUnit.rewardXp) || enemyUnit.level * 8);
       enemyUnit.rewardGold = Math.max(0, Number(enemyUnit.rewardGold) || enemyUnit.level * 3);
       enemyUnit.dropTable = Array.isArray(enemyUnit.dropTable) ? enemyUnit.dropTable : clone(fallback.dropTable);
     }
+
+    game.groundLoot = (game.groundLoot || [])
+      .filter((loot) => loot && Number.isFinite(Number(loot.x)) && Number.isFinite(Number(loot.y)))
+      .map((loot) => ({
+        id: typeof loot.id === "string" && loot.id ? loot.id : `loot-${uuid().slice(0, 8)}`,
+        x: Math.floor(Number(loot.x)),
+        y: Math.floor(Number(loot.y)),
+        xp: Math.max(0, Number(loot.xp) || 0),
+        gold: Math.max(0, Number(loot.gold) || 0),
+        drops: Object.fromEntries(
+          Object.entries(loot.drops && typeof loot.drops === "object" ? loot.drops : {})
+            .map(([itemId, qty]) => [itemId, Math.max(0, Number(qty) || 0)])
+            .filter(([, qty]) => qty > 0)
+        ),
+        enemyName: typeof loot.enemyName === "string" ? loot.enemyName : "Monster",
+        killerPlayerId: typeof loot.killerPlayerId === "string" ? loot.killerPlayerId : null,
+        at: Number(loot.at) || Date.now()
+      }));
   }
 
   function saveCampaignSnapshot() {
@@ -359,6 +389,7 @@ export function setupWebSocket(server) {
       hero.maxHp = maxHp;
       if (hero.hp > hero.maxHp) hero.hp = hero.maxHp;
       hero.level = profile.level;
+      collectLootAt(playerId, hero.x, hero.y);
     }
   }
 
@@ -417,6 +448,14 @@ export function setupWebSocket(server) {
               y: enemyUnit.y,
               hp: enemyUnit.hp,
               maxHp: enemyUnit.maxHp
+            })),
+            groundLoot: (game.groundLoot || []).map((loot) => ({
+              id: loot.id,
+              x: loot.x,
+              y: loot.y,
+              xp: loot.xp,
+              gold: loot.gold,
+              drops: loot.drops
             })),
             enemy: primaryEnemy
               ? {
@@ -516,6 +555,18 @@ export function setupWebSocket(server) {
               },
               inventory: { ...rpg.inventory }
             },
+            craftingOptions: Object.values(CRAFTING_RECIPES).map((recipe) => {
+              const canCraftByItems = Object.entries(recipe.requires).every(([itemId, qty]) => (rpg.inventory[itemId] || 0) >= qty);
+              const canCraft = canCraftByItems && (game.turn.apRemaining ?? 0) >= recipe.apCost;
+              return {
+                id: recipe.id,
+                label: recipe.label,
+                requires: recipe.requires,
+                yields: recipe.yields,
+                apCost: recipe.apCost,
+                canCraft
+              };
+            }),
             heroesPublic: Object.values(game.heroes).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
               ownerPlayerName:
@@ -541,6 +592,14 @@ export function setupWebSocket(server) {
               y: enemyUnit.y,
               hp: enemyUnit.hp,
               maxHp: enemyUnit.maxHp
+            })),
+            groundLoot: (game.groundLoot || []).map((loot) => ({
+              id: loot.id,
+              x: loot.x,
+              y: loot.y,
+              xp: loot.xp,
+              gold: loot.gold,
+              drops: loot.drops
             })),
             enemy: primaryEnemy
               ? {
@@ -589,6 +648,7 @@ export function setupWebSocket(server) {
                     at: game.lastLoot.at
                   }
                 : null,
+            reviveTargets: downedHeroTargetsFor(playerId),
             allowedActions:
               (() => {
                 if (!(isActive && hero && hero.hp > 0)) return [];
@@ -602,6 +662,7 @@ export function setupWebSocket(server) {
                     apRemaining >= recipe.apCost;
                   if (canCraftPotion) actions.push(ActionType.CRAFT_ITEM);
                   if ((rpg.inventory.potion || 0) > 0 && hero.hp < hero.maxHp) actions.push(ActionType.USE_ITEM);
+                  if (downedHeroTargetsFor(playerId).length) actions.push(ActionType.REVIVE);
                 }
                 if (apRemaining >= spell.apCost) actions.push(ActionType.CAST_SPELL);
                 return actions;
@@ -650,6 +711,23 @@ export function setupWebSocket(server) {
     return false;
   }
 
+  function downedHeroTargetsFor(actorPlayerId) {
+    if (!game) return [];
+    const actorHero = game.heroes?.[actorPlayerId];
+    if (!actorHero || actorHero.hp <= 0) return [];
+    const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
+    return Object.values(game.heroes || {})
+      .filter((h) => h.ownerPlayerId !== actorPlayerId)
+      .filter((h) => h.hp <= 0)
+      .map((h) => ({
+        playerId: h.ownerPlayerId,
+        playerName: session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName || campaignNameById.get(h.ownerPlayerId) || null,
+        distance: manhattan(actorHero, h)
+      }))
+      .filter((x) => x.distance <= 1)
+      .sort((a, b) => a.distance - b.distance || (a.playerName || "").localeCompare(b.playerName || ""));
+  }
+
   function enemyAt(x, y) {
     if (!game) return null;
     return (game.enemies || []).find((enemyUnit) => enemyUnit.hp > 0 && enemyUnit.x === x && enemyUnit.y === y) || null;
@@ -686,56 +764,90 @@ export function setupWebSocket(server) {
     return parts.length ? parts.join(", ") : "none";
   }
 
+  function collectLootAt(playerId, x, y) {
+    if (!game || !playerId) return null;
+    const allLoot = game.groundLoot || [];
+    const collected = allLoot.filter((loot) => loot.x === x && loot.y === y);
+    if (!collected.length) return null;
+
+    game.groundLoot = allLoot.filter((loot) => !(loot.x === x && loot.y === y));
+    const totals = { xp: 0, gold: 0, drops: {} };
+    for (const loot of collected) {
+      totals.xp += Math.max(0, Number(loot.xp) || 0);
+      totals.gold += Math.max(0, Number(loot.gold) || 0);
+      for (const [itemId, qty] of Object.entries(loot.drops || {})) {
+        if (!qty) continue;
+        totals.drops[itemId] = (totals.drops[itemId] || 0) + qty;
+      }
+    }
+
+    const campaignPlayer = campaignPlayerById(playerId);
+    const profile = ensureRpgProfile(campaignPlayer);
+    const levelsGained = grantXp(profile, totals.xp);
+    profile.gold += totals.gold;
+    addInventory(profile, totals.drops);
+    const upgradedWeapon = equipAutoUpgrades(profile);
+
+    const hero = game.heroes?.[playerId];
+    if (hero) {
+      const nextMaxHp = heroMaxHpForLevel(profile.level);
+      if (nextMaxHp > hero.maxHp) {
+        hero.maxHp = nextMaxHp;
+        hero.hp = clamp(hero.hp + levelsGained * 2, 0, hero.maxHp);
+      }
+      hero.level = profile.level;
+    }
+
+    const now = Date.now();
+    game.lastLoot = {
+      playerId,
+      enemyName: collected.length === 1 ? collected[0].enemyName : "Loot Cache",
+      xp: totals.xp,
+      gold: totals.gold,
+      drops: totals.drops,
+      at: now
+    };
+    game.log.push({
+      at: now,
+      msg: `${shortName(playerId)} loots ${totals.gold} gold, ${totals.xp} XP, items: ${formatDrops(totals.drops)}.`
+    });
+    if (levelsGained > 0) {
+      game.log.push({ at: now, msg: `${shortName(playerId)} reached level ${profile.level}!` });
+    }
+    if (upgradedWeapon) {
+      game.log.push({ at: now, msg: `${shortName(playerId)} upgraded weapon to ${upgradedWeapon.name}.` });
+    }
+
+    return game.lastLoot;
+  }
+
   function markEnemyDefeated(enemyUnit, killerPlayerId = null) {
     if (!game || !enemyUnit) return;
     const now = Date.now();
     game.scenario.defeatedCount = (game.scenario.defeatedCount ?? 0) + 1;
+    game.lastLoot = null;
 
     const xpReward = Math.max(1, Number(enemyUnit.rewardXp) || Number(enemyUnit.level) * 8 || 8);
     const goldReward = Math.max(0, Number(enemyUnit.rewardGold) || Number(enemyUnit.level) * 3 || 0);
     const drops = rollEnemyDrops(enemyUnit);
+    game.enemies = (game.enemies || []).filter((enemy) => enemy.id !== enemyUnit.id);
+    game.groundLoot = game.groundLoot || [];
+    game.groundLoot.push({
+      id: `loot-${uuid().slice(0, 8)}`,
+      x: enemyUnit.x,
+      y: enemyUnit.y,
+      xp: xpReward,
+      gold: goldReward,
+      drops,
+      enemyName: enemyUnit.name || "Monster",
+      killerPlayerId: killerPlayerId || null,
+      at: now
+    });
 
-    if (killerPlayerId) {
-      const campaignPlayer = campaignPlayerById(killerPlayerId);
-      const profile = ensureRpgProfile(campaignPlayer);
-      const levelsGained = grantXp(profile, xpReward);
-      profile.gold += goldReward;
-      addInventory(profile, drops);
-      const upgradedWeapon = equipAutoUpgrades(profile);
-
-      const hero = game.heroes?.[killerPlayerId];
-      if (hero) {
-        const nextMaxHp = heroMaxHpForLevel(profile.level);
-        if (nextMaxHp > hero.maxHp) {
-          hero.maxHp = nextMaxHp;
-          hero.hp = clamp(hero.hp + levelsGained * 2, 0, hero.maxHp);
-        }
-        hero.level = profile.level;
-      }
-
-      game.lastLoot = {
-        playerId: killerPlayerId,
-        enemyName: enemyUnit.name || "Monster",
-        xp: xpReward,
-        gold: goldReward,
-        drops,
-        at: now
-      };
-
-      game.log.push({
-        at: now,
-        msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total). +${xpReward} XP, +${goldReward} gold, drops: ${formatDrops(drops)}.`
-      });
-      if (levelsGained > 0) {
-        game.log.push({ at: now, msg: `${shortName(killerPlayerId)} reached level ${profile.level}!` });
-      }
-      if (upgradedWeapon) {
-        game.log.push({ at: now, msg: `${shortName(killerPlayerId)} upgraded weapon to ${upgradedWeapon.name}.` });
-      }
-      return;
-    }
-
-    game.log.push({ at: now, msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total).` });
+    game.log.push({
+      at: now,
+      msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total). Loot dropped at (${enemyUnit.x},${enemyUnit.y}).`
+    });
   }
 
   function enemyTakeTurn() {
@@ -827,12 +939,13 @@ export function setupWebSocket(server) {
     pushGameHistory();
     hero.x = nx; hero.y = ny;
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} moves to (${nx},${ny}).` });
+    collectLootAt(actorPlayerId, nx, ny);
     game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
   }
 
-  function handleAttack(ws, id, actorPlayerId) {
+  function handleAttack(ws, id, actorPlayerId, params = {}) {
     if (!requireActive(ws, id, actorPlayerId)) return;
     // Action points
     if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
@@ -846,7 +959,11 @@ export function setupWebSocket(server) {
       .filter((x) => x.dist <= game.rules.attackRange)
       .sort((a, b) => a.enemyUnit.hp - b.enemyUnit.hp || a.dist - b.dist || a.enemyUnit.id.localeCompare(b.enemyUnit.id));
     if (!targets.length) return reject(ws, id, "OUT_OF_RANGE", `No enemy in range (range ${game.rules.attackRange}).`);
-    const target = targets[0].enemyUnit;
+    const targetEnemyId = (params?.targetEnemyId ?? "").toString().trim();
+    const target = targetEnemyId
+      ? (targets.find((x) => x.enemyUnit.id === targetEnemyId)?.enemyUnit || null)
+      : targets[0].enemyUnit;
+    if (!target) return reject(ws, id, "OUT_OF_RANGE", "Selected enemy is not in range.");
 
     pushGameHistory();
     const enemyHpBefore = target.hp;
@@ -869,7 +986,7 @@ export function setupWebSocket(server) {
     emitViews();
   }
 
-  function handleCastSpell(ws, id, actorPlayerId) {
+  function handleCastSpell(ws, id, actorPlayerId, params = {}) {
     if (!requireActive(ws, id, actorPlayerId)) return;
     const hero = game.heroes[actorPlayerId];
     if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
@@ -886,7 +1003,11 @@ export function setupWebSocket(server) {
       .filter((x) => x.dist <= spellRange)
       .sort((a, b) => a.enemyUnit.hp - b.enemyUnit.hp || a.dist - b.dist || a.enemyUnit.id.localeCompare(b.enemyUnit.id));
     if (!targets.length) return reject(ws, id, "OUT_OF_RANGE", `No enemy in spell range (range ${spellRange}).`);
-    const target = targets[0].enemyUnit;
+    const targetEnemyId = (params?.targetEnemyId ?? "").toString().trim();
+    const target = targetEnemyId
+      ? (targets.find((x) => x.enemyUnit.id === targetEnemyId)?.enemyUnit || null)
+      : targets[0].enemyUnit;
+    if (!target) return reject(ws, id, "OUT_OF_RANGE", "Selected enemy is not in spell range.");
 
     pushGameHistory();
     const enemyHpBefore = target.hp;
@@ -963,6 +1084,37 @@ export function setupWebSocket(server) {
     game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} drinks a potion and restores ${actualHealed} HP.` });
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, used: itemId, healed: actualHealed }, id));
+    emitViews();
+  }
+
+  function handleRevive(ws, id, actorPlayerId, params = {}) {
+    if (!requireActive(ws, id, actorPlayerId)) return;
+    const actorHero = game.heroes[actorPlayerId];
+    if (!actorHero || actorHero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+    if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining.");
+
+    const requestedTargetId = (params.targetPlayerId || "").toString().trim();
+    const targets = downedHeroTargetsFor(actorPlayerId);
+    if (!targets.length) return reject(ws, id, "NO_TARGET", "No downed ally in revive range.");
+
+    const targetInfo = requestedTargetId
+      ? targets.find((t) => t.playerId === requestedTargetId) || null
+      : targets[0];
+    if (!targetInfo) return reject(ws, id, "NO_TARGET", "Target is not in revive range.");
+
+    const targetHero = game.heroes[targetInfo.playerId];
+    if (!targetHero || targetHero.hp > 0) return reject(ws, id, "NO_TARGET", "Target is not downed.");
+
+    pushGameHistory();
+    const restoredHp = Math.max(1, Math.ceil(targetHero.maxHp * 0.4));
+    targetHero.hp = clamp(restoredHp, 1, targetHero.maxHp);
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
+    game.log.push({
+      at: Date.now(),
+      msg: `${shortName(actorPlayerId)} revives ${shortName(targetInfo.playerId)} (${targetHero.hp}/${targetHero.maxHp} HP).`
+    });
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, revived: targetInfo.playerId, hp: targetHero.hp }, id));
     emitViews();
   }
 
@@ -1186,8 +1338,9 @@ export function setupWebSocket(server) {
     const params = payload?.params ?? {};
 
     if (action === ActionType.MOVE) return handleMove(ws, id, actorPlayerId, params);
-    if (action === ActionType.ATTACK) return handleAttack(ws, id, actorPlayerId);
-    if (action === ActionType.CAST_SPELL) return handleCastSpell(ws, id, actorPlayerId);
+    if (action === ActionType.ATTACK) return handleAttack(ws, id, actorPlayerId, params);
+    if (action === ActionType.CAST_SPELL) return handleCastSpell(ws, id, actorPlayerId, params);
+    if (action === ActionType.REVIVE) return handleRevive(ws, id, actorPlayerId, params);
     if (action === ActionType.CRAFT_ITEM) return handleCraftItem(ws, id, actorPlayerId, params);
     if (action === ActionType.USE_ITEM) return handleUseItem(ws, id, actorPlayerId, params);
     if (action === ActionType.END_TURN) return handleEndTurn(ws, id, actorPlayerId);
