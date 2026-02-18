@@ -3,11 +3,15 @@ import { v4 as uuid } from "uuid";
 import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
 import {
-  loadCampaignState,
+  createCampaign,
+  getCampaign,
+  listCampaigns,
+  loadCampaignStore,
   makeDefaultCampaignState,
   makeDefaultRpgProfile,
   pickOrCreateCampaignPlayer,
-  saveCampaignState
+  saveCampaignStore,
+  touchCampaign
 } from "./campaign-store.js";
 import {
   ActionType,
@@ -52,10 +56,12 @@ function envPort(key, fallback) {
   return Math.floor(raw);
 }
 
-function makeSession() {
+function makeSession(gameId, campaignId) {
   return {
     sessionId: uuid().slice(0, 8),
     createdAt: Date.now(),
+    gameId: gameId || "unknown",
+    campaignId: campaignId || null,
     seats: Array.from({ length: 6 }, (_, i) => ({
       seat: i + 1,
       occupied: false,
@@ -244,13 +250,73 @@ function rollEnemyDrops(enemyUnit) {
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ server });
 
-  const session = makeSession();
-  const campaign = loadCampaignState();
+  const campaignStore = loadCampaignStore();
+  const sessions = new Map(); // sessionId -> { session, campaign, game, gameHistory, tableWs, gameId }
+  const sessionByCampaignId = new Map();
+
+  let session = null;
+  let campaign = null;
+  let game = null;
   let tableWs = null;
-  let game = campaign.activeGame || null;
-  const gameHistory = [];
+  let gameHistory = null;
 
   const clients = new Map(); // ws -> { clientId, role, playerId?, seat? }
+
+  function bindContext(ctx) {
+    session = ctx.session;
+    campaign = ctx.campaign;
+    game = ctx.game;
+    gameHistory = ctx.gameHistory;
+    tableWs = ctx.tableWs;
+  }
+
+  function syncContext(ctx) {
+    ctx.session = session;
+    ctx.campaign = campaign;
+    ctx.game = game;
+    ctx.gameHistory = gameHistory;
+    ctx.tableWs = tableWs;
+  }
+
+  function listCampaignSummaries(gameId) {
+    return listCampaigns(campaignStore, gameId).map((c) => ({
+      id: c.id,
+      title: c.title,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt
+    }));
+  }
+
+  function createSessionContext(gameId, campaignState) {
+    const ctx = {
+      session: makeSession(gameId, campaignState?.id),
+      gameId,
+      campaign: campaignState,
+      game: campaignState?.activeGame || null,
+      gameHistory: [],
+      tableWs: null
+    };
+    sessions.set(ctx.session.sessionId, ctx);
+    if (campaignState?.id) sessionByCampaignId.set(campaignState.id, ctx.session.sessionId);
+    bindContext(ctx);
+    ensureGameShape();
+    syncContext(ctx);
+    return ctx;
+  }
+
+  function getSessionContext(sessionId) {
+    if (!sessionId) return null;
+    return sessions.get(sessionId) || null;
+  }
+
+  function getOrCreateSessionForCampaign(gameId, campaignState) {
+    const existingId = campaignState?.id ? sessionByCampaignId.get(campaignState.id) : null;
+    if (existingId) {
+      const existing = sessions.get(existingId) || null;
+      if (existing) return existing;
+    }
+    return createSessionContext(gameId, campaignState);
+  }
 
   function ensureGameShape() {
     if (!game) return;
@@ -331,16 +397,17 @@ export function setupWebSocket(server) {
   function saveCampaignSnapshot() {
     ensureGameShape();
     campaign.activeGame = game ? cloneGameState(game) : null;
-    saveCampaignState(campaign);
+    touchCampaign(campaign);
+    saveCampaignStore(campaignStore);
   }
 
   function resetCampaignInPlace() {
-    const freshCampaign = makeDefaultCampaignState();
+    const freshCampaign = makeDefaultCampaignState({ title: campaign?.title });
+    freshCampaign.id = campaign?.id || freshCampaign.id;
+    freshCampaign.createdAt = campaign?.createdAt || freshCampaign.createdAt;
     for (const key of Object.keys(campaign)) delete campaign[key];
     Object.assign(campaign, freshCampaign);
   }
-
-  ensureGameShape();
 
   function shortName(pid) {
     const s = session.seats.find((x) => x.playerId === pid);
@@ -349,7 +416,7 @@ export function setupWebSocket(server) {
 
   function isPlayerConnected(playerId) {
     for (const info of clients.values()) {
-      if (info.role === Role.PHONE && info.playerId === playerId) return true;
+      if (info.sessionId === session.sessionId && info.role === Role.PHONE && info.playerId === playerId) return true;
     }
     return false;
   }
@@ -725,11 +792,10 @@ export function setupWebSocket(server) {
 
   function emitViews() {
     saveCampaignSnapshot();
-    if (tableWs) send(tableWs, makeMsg(MsgType.STATE_PUBLIC, { state: computePublicState() }));
     for (const [ws, info] of clients.entries()) {
-      if (info.role === Role.PHONE && info.playerId) {
-        send(ws, makeMsg(MsgType.STATE_PRIVATE, { state: computePrivateState(info.playerId) }));
-      }
+      if (info.sessionId !== session.sessionId) continue;
+      if (info.role === Role.TABLE) send(ws, makeMsg(MsgType.STATE_PUBLIC, { state: computePublicState() }));
+      if (info.role === Role.PHONE && info.playerId) send(ws, makeMsg(MsgType.STATE_PRIVATE, { state: computePrivateState(info.playerId) }));
     }
   }
 
@@ -1228,7 +1294,8 @@ export function setupWebSocket(server) {
     info.seat = seatObj.seat;
     ensureGameFor(campaignPlayer.id, seatObj.seat - 1);
     game.log.push({ at: Date.now(), msg: `Player joined campaign: ${campaignPlayer.name} (${campaignPlayer.id.slice(0, 4)})` });
-    saveCampaignState(campaign);
+    touchCampaign(campaign);
+    saveCampaignStore(campaignStore);
     return token;
   }
 
@@ -1308,7 +1375,7 @@ export function setupWebSocket(server) {
 
     // Disconnect gameplay ownership for any connected phone clients.
     for (const [clientWs, info] of clients.entries()) {
-      if (info.role === Role.PHONE && info.playerId === playerId) {
+      if (info.sessionId === session.sessionId && info.role === Role.PHONE && info.playerId === playerId) {
         info.playerId = null;
         info.seat = null;
         send(clientWs, makeMsg(MsgType.ERROR, { code: "KICKED", message: "You were removed from the session by the table." }, "kicked"));
@@ -1362,7 +1429,7 @@ export function setupWebSocket(server) {
     }
 
     for (const [clientWs, info] of clients.entries()) {
-      if (info.role !== Role.PHONE) continue;
+      if (info.role !== Role.PHONE || info.sessionId !== session.sessionId) continue;
       info.playerId = null;
       info.seat = null;
       send(
@@ -1376,7 +1443,8 @@ export function setupWebSocket(server) {
       send(clientWs, makeMsg(MsgType.STATE_PRIVATE, { state: { sessionId: session.sessionId, player: null, game: null } }));
     }
 
-    saveCampaignState(campaign);
+    touchCampaign(campaign);
+    saveCampaignStore(campaignStore);
     send(ws, makeMsg(MsgType.OK, { accepted: true, campaignId: campaign.id }, id));
     emitViews();
   }
@@ -1402,7 +1470,7 @@ export function setupWebSocket(server) {
   wss.on("connection", (ws) => {
     console.log(`[ws] connection open (build ${BUILD_TAG})`);
     const clientId = uuid();
-    clients.set(ws, { clientId, role: null, playerId: null, seat: null });
+    clients.set(ws, { clientId, role: null, playerId: null, seat: null, sessionId: null, gameId: null });
 
     ws.on("message", (data, isBinary) => {
       // Some environments/extensions can emit non-JSON frames. We ignore obviously-non-JSON payloads
@@ -1445,18 +1513,27 @@ export function setupWebSocket(server) {
 
     ws.on("close", () => {
       const info = clients.get(ws);
-      if (info?.role === Role.TABLE && tableWs === ws) tableWs = null;
-      if (info?.role === Role.PHONE && info.seat) {
-        const seatObj = session.seats[info.seat - 1];
-        if (seatObj && seatObj.playerId === info.playerId) {
-          seatObj.occupied = false;
-          seatObj.playerName = null;
-          seatObj.playerId = null;
-          seatObj.resumeToken = null;
+      const ctx = info?.sessionId ? getSessionContext(info.sessionId) : null;
+      if (ctx) {
+        bindContext(ctx);
+        if (info?.role === Role.TABLE && tableWs === ws) tableWs = null;
+        if (info?.role === Role.PHONE && info.seat) {
+          const seatObj = session.seats[info.seat - 1];
+          if (seatObj && seatObj.playerId === info.playerId) {
+            seatObj.occupied = false;
+            seatObj.playerName = null;
+            seatObj.playerId = null;
+            seatObj.resumeToken = null;
+          }
         }
+        syncContext(ctx);
       }
       clients.delete(ws);
-      emitViews();
+      if (ctx) {
+        bindContext(ctx);
+        emitViews();
+        syncContext(ctx);
+      }
     });
   });
 
@@ -1474,35 +1551,108 @@ export function setupWebSocket(server) {
       const role = msg.payload?.role;
       if (role !== Role.TABLE && role !== Role.PHONE) return reject(ws, msg.id, "BAD_ROLE", "role must be 'table' or 'phone'");
       info.role = role;
+      if (role === Role.TABLE) {
+        const gameId = (msg.payload?.gameId ?? "").toString().trim();
+        if (!gameId) return reject(ws, msg.id, "BAD_GAME", "gameId required for table clients.");
+        info.gameId = gameId;
+        send(ws, makeMsg(MsgType.OK, { clientId: info.clientId }, msg.id));
+        send(ws, makeMsg(MsgType.CAMPAIGN_LIST, { gameId, campaigns: listCampaignSummaries(gameId) }, "campaign-list"));
+        return;
+      }
 
-      const resumeToken = msg.payload?.resumeToken;
-      if (role === Role.PHONE && resumeToken) {
-        const seat = session.seats.find((s) => s.resumeToken === resumeToken);
-        if (seat) {
-          info.playerId = seat.playerId;
-          info.seat = seat.seat;
-          ensureGameFor(seat.playerId, seat.seat - 1);
+      if (role === Role.PHONE) {
+        const sessionId = (msg.payload?.sessionId ?? "").toString().trim();
+        if (!sessionId) return reject(ws, msg.id, "NO_SESSION", "sessionId required for phone clients.");
+        const ctx = getSessionContext(sessionId);
+        if (!ctx) return reject(ws, msg.id, "BAD_SESSION", "Unknown session.");
+        info.sessionId = sessionId;
+        info.gameId = ctx.gameId;
+        bindContext(ctx);
+        const resumeToken = msg.payload?.resumeToken;
+        if (resumeToken) {
+          const seat = session.seats.find((s) => s.resumeToken === resumeToken);
+          if (seat) {
+            info.playerId = seat.playerId;
+            info.seat = seat.seat;
+            ensureGameFor(seat.playerId, seat.seat - 1);
+          }
+        }
+        send(ws, makeMsg(MsgType.OK, { clientId: info.clientId }, msg.id));
+        emitViews();
+        syncContext(ctx);
+        return;
+      }
+    }
+
+    if (msg.t === MsgType.CAMPAIGN_SELECT) {
+      if (info.role !== Role.TABLE) return reject(ws, msg.id, "NOT_TABLE", "Only the table can select campaigns.");
+      const requestedGameId = (msg.payload?.gameId ?? info.gameId ?? "").toString().trim();
+      if (!requestedGameId) return reject(ws, msg.id, "BAD_GAME", "gameId required.");
+
+      const prevSessionId = info.sessionId;
+      if (prevSessionId) {
+        const prevCtx = getSessionContext(prevSessionId);
+        if (prevCtx && prevCtx.tableWs === ws) {
+          bindContext(prevCtx);
+          tableWs = null;
+          syncContext(prevCtx);
         }
       }
 
-      if (role === Role.TABLE) tableWs = ws;
+      let campaignState = null;
+      const requestedCampaignId = (msg.payload?.campaignId ?? "").toString().trim();
+      if (requestedCampaignId) {
+        campaignState = getCampaign(campaignStore, requestedGameId, requestedCampaignId);
+        if (!campaignState) return reject(ws, msg.id, "BAD_CAMPAIGN", "Campaign not found.");
+      } else {
+        const title = (msg.payload?.title ?? "").toString().trim().slice(0, 48) || "New Campaign";
+        campaignState = createCampaign(campaignStore, requestedGameId, title);
+        touchCampaign(campaignState);
+        saveCampaignStore(campaignStore);
+      }
 
-      send(ws, makeMsg(MsgType.OK, { clientId: info.clientId }, msg.id));
-      if (role === Role.TABLE) send(ws, makeMsg(MsgType.SESSION_INFO, { sessionId: session.sessionId, joinUrl: getJoinUrl() }));
+      const ctx = getOrCreateSessionForCampaign(requestedGameId, campaignState);
+      bindContext(ctx);
+      tableWs = ws;
+      info.sessionId = session.sessionId;
+      info.gameId = requestedGameId;
+      send(ws, makeMsg(MsgType.OK, { accepted: true, campaignId: campaignState.id, sessionId: session.sessionId }, msg.id));
+      send(
+        ws,
+        makeMsg(MsgType.SESSION_INFO, {
+          sessionId: session.sessionId,
+          joinUrl: getJoinUrl(),
+          gameId: requestedGameId,
+          campaign: { id: campaignState.id, title: campaignState.title }
+        })
+      );
+      send(ws, makeMsg(MsgType.CAMPAIGN_LIST, { gameId: requestedGameId, campaigns: listCampaignSummaries(requestedGameId) }, "campaign-list"));
       emitViews();
+      syncContext(ctx);
       return;
     }
 
+    const ctx = info?.sessionId ? getSessionContext(info.sessionId) : null;
+    if (!ctx) return reject(ws, msg.id, "NO_SESSION", "Select a campaign first.");
+    bindContext(ctx);
+
     if (msg.t === MsgType.JOIN) {
-      if (info.role !== Role.PHONE) return reject(ws, msg.id, "NOT_PHONE", "Only phones can JOIN");
+      if (info.role !== Role.PHONE) {
+        syncContext(ctx);
+        return reject(ws, msg.id, "NOT_PHONE", "Only phones can JOIN");
+      }
       const playerName = (msg.payload?.playerName ?? "").toString().trim().slice(0, 32);
       const requestedSeat = Number(msg.payload?.seat);
-      if (!playerName) return reject(ws, msg.id, "BAD_NAME", "playerName required");
+      if (!playerName) {
+        syncContext(ctx);
+        return reject(ws, msg.id, "BAD_NAME", "playerName required");
+      }
 
       if (info.playerId) {
         // already joined (e.g., resumed via token)
         send(ws, makeMsg(MsgType.OK, { playerId: info.playerId, seat: info.seat, resumeToken: session.seats.find((s)=>s.playerId===info.playerId)?.resumeToken || undefined }, msg.id));
         emitViews();
+        syncContext(ctx);
         return;
       }
 
@@ -1522,6 +1672,7 @@ export function setupWebSocket(server) {
         ensureGameFor(reclaimSeat.playerId, reclaimSeat.seat - 1);
         send(ws, makeMsg(MsgType.OK, { playerId: reclaimSeat.playerId, seat: reclaimSeat.seat, resumeToken: token, reclaimed: true }, msg.id));
         emitViews();
+        syncContext(ctx);
         return;
       }
 
@@ -1531,13 +1682,17 @@ export function setupWebSocket(server) {
         if (!candidate.occupied) seatObj = candidate;
       }
       if (!seatObj) seatObj = session.seats.find((s) => !s.occupied) ?? null;
-      if (!seatObj) return reject(ws, msg.id, "NO_SEATS", "No seats available");
+      if (!seatObj) {
+        syncContext(ctx);
+        return reject(ws, msg.id, "NO_SEATS", "No seats available");
+      }
 
       const campaignPlayer = pickOrCreateCampaignPlayer(campaign, playerName, occupiedCampaignPlayerIds());
       const token = assignSeatToCampaignPlayer(seatObj, campaignPlayer, info);
 
       send(ws, makeMsg(MsgType.OK, { playerId: campaignPlayer.id, seat: seatObj.seat, resumeToken: token, campaignPlayerId: campaignPlayer.id }, msg.id));
       emitViews();
+      syncContext(ctx);
       return;
     }
 
@@ -1546,36 +1701,47 @@ export function setupWebSocket(server) {
         const action = msg.payload?.action;
         if (action === ActionType.SPAWN_ENEMY) {
           handleSpawnEnemy(ws, msg.id);
+          syncContext(ctx);
           return;
         }
         if (action === ActionType.UNDO) {
           handleUndo(ws, msg.id);
+          syncContext(ctx);
           return;
         }
         if (action === ActionType.KICK_PLAYER) {
           handleKickPlayer(ws, msg.id, msg.payload?.params ?? {});
+          syncContext(ctx);
           return;
         }
         if (action === ActionType.NEW_CAMPAIGN) {
           handleNewCampaign(ws, msg.id);
+          syncContext(ctx);
           return;
         }
+        syncContext(ctx);
         reject(ws, msg.id, "TABLE_FORBIDDEN", "Table is view-only. Move from your phone.");
         return;
       }
 
       if (info.role === Role.PHONE) {
-        if (!info.playerId) return reject(ws, msg.id, "NOT_JOINED", "Join a seat first.");
+        if (!info.playerId) {
+          syncContext(ctx);
+          return reject(ws, msg.id, "NOT_JOINED", "Join a seat first.");
+        }
         handleAction(ws, msg.id, info.playerId, msg.payload);
+        syncContext(ctx);
         return;
       }
 
+      syncContext(ctx);
       reject(ws, msg.id, "BAD_ROLE", "Unknown client role");
       return;
     }
 
+    syncContext(ctx);
     reject(ws, msg.id, "UNKNOWN_TYPE", `Unknown type ${msg.t}`);
   }
 
-  console.log(`WebSocket server ready. Session=${session.sessionId} Join=${getJoinUrl()}`);
+  console.log(`WebSocket server ready. (build ${BUILD_TAG})`);
 }

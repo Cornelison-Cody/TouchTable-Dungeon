@@ -4,7 +4,8 @@ import { fileURLToPath } from "url";
 import { v4 as uuid } from "uuid";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CAMPAIGN_FILE = path.join(__dirname, ".campaign-state.json");
+const CAMPAIGN_STORE_FILE = path.join(__dirname, ".campaigns.json");
+const LEGACY_CAMPAIGN_FILE = path.join(__dirname, ".campaign-state.json");
 
 export function makeDefaultRpgProfile() {
   return {
@@ -23,11 +24,11 @@ export function makeDefaultRpgProfile() {
   };
 }
 
-export function makeDefaultCampaignState() {
+export function makeDefaultCampaignState({ title } = {}) {
   const now = Date.now();
   return {
-    id: "campaign-1",
-    title: "TouchTable Campaign",
+    id: `campaign-${uuid().slice(0, 8)}`,
+    title: typeof title === "string" && title.trim() ? title.trim() : "New Campaign",
     createdAt: now,
     updatedAt: now,
     players: [],
@@ -40,18 +41,47 @@ export function makeDefaultCampaignState() {
   };
 }
 
+function makeDefaultStore() {
+  return {
+    version: 1,
+    games: {}
+  };
+}
+
 function sanitizeCampaign(raw) {
   const base = makeDefaultCampaignState();
   const state = raw && typeof raw === "object" ? raw : {};
   const rawPlayers = Array.isArray(state.players) ? state.players : [];
+  const createdAt = Number(state.createdAt) || base.createdAt;
+  const updatedAt = Number(state.updatedAt) || createdAt;
   return {
     ...base,
     ...state,
+    createdAt,
+    updatedAt,
     players: rawPlayers.map((p) => sanitizeCampaignPlayer(p)),
     progression: {
       ...base.progression,
       ...(state.progression && typeof state.progression === "object" ? state.progression : {})
     }
+  };
+}
+
+function sanitizeStore(raw) {
+  const base = makeDefaultStore();
+  const store = raw && typeof raw === "object" ? raw : {};
+  const rawGames = store.games && typeof store.games === "object" ? store.games : {};
+  const games = {};
+  for (const [gameId, entry] of Object.entries(rawGames)) {
+    const campaigns = Array.isArray(entry?.campaigns) ? entry.campaigns : [];
+    games[gameId] = {
+      campaigns: campaigns.map((c) => sanitizeCampaign(c))
+    };
+  }
+  return {
+    ...base,
+    ...store,
+    games
   };
 }
 
@@ -98,21 +128,63 @@ function sanitizeCampaignPlayer(rawPlayer) {
   };
 }
 
-export function loadCampaignState() {
+function ensureGameEntry(store, gameId) {
+  if (!store.games[gameId]) {
+    store.games[gameId] = { campaigns: [] };
+  } else if (!Array.isArray(store.games[gameId].campaigns)) {
+    store.games[gameId].campaigns = [];
+  }
+  return store.games[gameId];
+}
+
+export function loadCampaignStore() {
   try {
-    if (!fs.existsSync(CAMPAIGN_FILE)) return makeDefaultCampaignState();
-    const text = fs.readFileSync(CAMPAIGN_FILE, "utf8");
+    if (!fs.existsSync(CAMPAIGN_STORE_FILE)) {
+      const fallback = makeDefaultStore();
+      if (fs.existsSync(LEGACY_CAMPAIGN_FILE)) {
+        const text = fs.readFileSync(LEGACY_CAMPAIGN_FILE, "utf8");
+        const legacy = sanitizeCampaign(JSON.parse(text));
+        fallback.games["touchtable-dungeon"] = { campaigns: [legacy] };
+      }
+      return fallback;
+    }
+    const text = fs.readFileSync(CAMPAIGN_STORE_FILE, "utf8");
     const parsed = JSON.parse(text);
-    return sanitizeCampaign(parsed);
+    return sanitizeStore(parsed);
   } catch {
-    return makeDefaultCampaignState();
+    return makeDefaultStore();
   }
 }
 
-export function saveCampaignState(campaignState) {
-  const safe = sanitizeCampaign(campaignState);
-  safe.updatedAt = Date.now();
-  fs.writeFileSync(CAMPAIGN_FILE, JSON.stringify(safe, null, 2), "utf8");
+export function saveCampaignStore(store) {
+  const safe = sanitizeStore(store);
+  fs.writeFileSync(CAMPAIGN_STORE_FILE, JSON.stringify(safe, null, 2), "utf8");
+}
+
+export function listCampaigns(store, gameId) {
+  const entry = ensureGameEntry(store, gameId);
+  return entry.campaigns
+    .map((c) => sanitizeCampaign(c))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+export function getCampaign(store, gameId, campaignId) {
+  const entry = ensureGameEntry(store, gameId);
+  if (!campaignId) return null;
+  return entry.campaigns.find((c) => c.id === campaignId) || null;
+}
+
+export function createCampaign(store, gameId, title) {
+  const entry = ensureGameEntry(store, gameId);
+  const campaign = makeDefaultCampaignState({ title });
+  entry.campaigns.push(campaign);
+  return campaign;
+}
+
+export function touchCampaign(campaign) {
+  if (campaign && typeof campaign === "object") {
+    campaign.updatedAt = Date.now();
+  }
 }
 
 export function pickOrCreateCampaignPlayer(campaignState, playerName, occupiedPlayerIds = new Set()) {

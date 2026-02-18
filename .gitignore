@@ -31,3 +31,4 @@ venv/
 *.save
 .saves/
 server/.campaign-state.json
+server/.campaigns.json

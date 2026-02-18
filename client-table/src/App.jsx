@@ -30,6 +30,18 @@ function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
 }
 
+function withGameParam(urlString, gameId) {
+  if (!urlString) return "";
+  try {
+    const base = typeof window !== "undefined" ? window.location.href : "http://localhost";
+    const url = new URL(urlString, base);
+    url.searchParams.set("game", gameId);
+    return url.toString();
+  } catch {
+    return urlString;
+  }
+}
+
 function Icon({ path, size = 16, stroke = "currentColor", fill = "none", strokeWidth = 2 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ display: "block" }}>
@@ -54,6 +66,13 @@ const TABLE_GAMES = [
     badges: ["Live now", "4 players", "Tactical"]
   },
   {
+    id: "kewl-card-game",
+    title: "Kewl Card Game",
+    subtitle: "Prototype table UI",
+    description: "A new table experience starting from the TouchTable Dungeon layout and flow.",
+    badges: ["New", "Table only", "Prototype"]
+  },
+  {
     id: "catan",
     title: "Catan",
     subtitle: "Physical pieces mode",
@@ -63,9 +82,14 @@ const TABLE_GAMES = [
 ];
 
 function DungeonTableView({ onBackToMenu }) {
+  const gameId = "touchtable-dungeon";
   const [wsUrl] = useState(makeWsUrl());
   const [status, setStatus] = useState("disconnected");
   const [sessionInfo, setSessionInfo] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignPromptOpen, setCampaignPromptOpen] = useState(true);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignError, setCampaignError] = useState(null);
   const [publicState, setPublicState] = useState(null);
   const [error, setError] = useState(null);
   const [tableHitFx, setTableHitFx] = useState(null);
@@ -95,14 +119,18 @@ function DungeonTableView({ onBackToMenu }) {
 
     ws.onopen = () => {
       setStatus("connected");
-      ws.send(JSON.stringify(makeMsg(MsgType.HELLO, { role: Role.TABLE }, "hello-table")));
+      ws.send(JSON.stringify(makeMsg(MsgType.HELLO, { role: Role.TABLE, gameId }, "hello-table")));
     };
 
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.t === MsgType.SESSION_INFO) {
+        if (msg.t === MsgType.CAMPAIGN_LIST) {
+          setCampaigns(Array.isArray(msg.payload?.campaigns) ? msg.payload.campaigns : []);
+        } else if (msg.t === MsgType.SESSION_INFO) {
           setSessionInfo(msg.payload);
+          setCampaignPromptOpen(false);
+          setCampaignError(null);
         } else if (msg.t === MsgType.STATE_PUBLIC) {
           setPublicState(msg.payload?.state ?? null);
         } else if (msg.t === MsgType.ERROR) {
@@ -135,6 +163,31 @@ function DungeonTableView({ onBackToMenu }) {
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params }, msgId)));
   }
 
+  function selectCampaign(campaignId) {
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, campaignId }, "campaign-select")));
+  }
+
+  function createCampaignFromName() {
+    const title = campaignName.trim();
+    if (!title) {
+      setCampaignError("Enter a campaign name.");
+      return;
+    }
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, title }, "campaign-select")));
+    setCampaignName("");
+  }
   function spawnEnemyForTesting() {
     sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
   }
@@ -244,7 +297,9 @@ function DungeonTableView({ onBackToMenu }) {
     noise.stop(t + 0.1);
   }
 
-  const joinUrl = sessionInfo?.joinUrl || "";
+  const joinUrl = withGameParam(sessionInfo?.joinUrl || "", "touchtable-dungeon");
+  const campaignTitle = sessionInfo?.campaign?.title || '';
+  const showCampaignPrompt = campaignPromptOpen;
   const game = publicState?.game || null;
   const terrainSeed = game?.terrain?.seed ?? 0;
   const terrainTheme = game?.terrain?.theme || "frostwild-frontier";
@@ -926,6 +981,7 @@ function DungeonTableView({ onBackToMenu }) {
         <header className="ttd-header">
           <div>
             <h1 className="ttd-title">TouchTable Dungeon</h1>
+            <div style={{ marginTop: 6, color: "var(--ttd-sub)", fontWeight: 700 }}>Campaign: {campaignTitle || "Select a campaign"}</div>
           </div>
           <div className="ttd-header-meta">
             <button className="ttd-btn" onClick={onBackToMenu}>
@@ -960,6 +1016,9 @@ function DungeonTableView({ onBackToMenu }) {
                 </button>
                 <button className="ttd-btn danger" onClick={startNewCampaign}>
                   New Campaign
+                </button>
+                <button className="ttd-btn" onClick={() => setCampaignPromptOpen(true)}>
+                  Switch Campaign
                 </button>
                 <button
                   className="ttd-btn"
@@ -1324,6 +1383,1472 @@ function DungeonTableView({ onBackToMenu }) {
         </div>
       </div>
 
+      {showCampaignPrompt ? (
+        <div className="ttd-modal-backdrop" onClick={() => {}}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ttd-modal-head">
+              <h3>Choose Campaign</h3>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Start new</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={campaignName}
+                    placeholder="Campaign name"
+                    onChange={(e) => setCampaignName(e.target.value)}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(148, 166, 186, 0.35)", background: "rgba(12, 18, 26, 0.65)", color: "var(--ttd-ink)" }}
+                  />
+                  <button className="ttd-btn primary" onClick={createCampaignFromName}>
+                    Start
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Load existing</div>
+                <div style={{ display: "grid", gap: 6, maxHeight: 260, overflow: "auto" }}>
+                  {campaigns.length ? (
+                    campaigns.map((c) => (
+                      <button key={c.id} className="ttd-btn" onClick={() => selectCampaign(c.id)}>
+                        {c.title}
+                      </button>
+                    ))
+                  ) : (
+                    <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
+                  )}
+                </div>
+              </div>
+              {campaignError ? <div style={{ color: "#f1b2b2", fontSize: "0.9rem" }}>{campaignError}</div> : null}
+              {sessionInfo ? (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button className="ttd-btn" onClick={() => setCampaignPromptOpen(false)}>
+                    Close
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {enemyInspectId ? (
+        <div className="ttd-modal-backdrop" onClick={() => setEnemyInspectId(null)}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            {viewedEnemy ? (
+              <>
+                <div className="ttd-enemy-art">{viewedEnemy.art}</div>
+                <h3 style={{ marginTop: 0, marginBottom: 8 }}>{viewedEnemy.name}</h3>
+                <div style={{ marginBottom: 8, color: "var(--ttd-sub)", fontWeight: 700 }}>
+                  Level {viewedEnemy.level} | Tier: {viewedEnemy.tier}
+                </div>
+                <div className="ttd-stat-grid" style={{ marginBottom: 10 }}>
+                  <div className="ttd-stat">
+                    <label>Health</label>
+                    <strong style={mono}>{viewedEnemy.hp}</strong>
+                  </div>
+                  <div className="ttd-stat">
+                    <label>Attack Power</label>
+                    <strong style={{ ...mono, color: "#ff8b8b" }}>{viewedEnemy.attackPower}</strong>
+                  </div>
+                </div>
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>{viewedEnemy.flavor}</p>
+              </>
+            ) : (
+              <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Enemy details unavailable.</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {kickPrompt ? (
+        <div className="ttd-modal-backdrop" onClick={() => setKickPrompt(null)}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ttd-modal-head">
+              <h3>Kick Player?</h3>
+            </div>
+            <p style={{ marginTop: 0, marginBottom: 14, color: "var(--ttd-sub)" }}>
+              Remove <strong>{kickPrompt.playerName}</strong> from this session?
+            </p>
+            <div className="ttd-action-row" style={{ justifyContent: "flex-end" }}>
+              <button className="ttd-btn" onClick={() => setKickPrompt(null)}>
+                Cancel
+              </button>
+              <button className="ttd-btn danger" onClick={confirmKickPlayer}>
+                Kick Player
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {qrOpen ? (
+        <div className="ttd-modal-backdrop" onClick={() => setQrOpen(false)}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            {joinUrl ? (
+              <div className="ttd-qr-wrap">
+                <QRCodeCanvas value={joinUrl} size={280} includeMargin />
+              </div>
+            ) : (
+              <div className="ttd-qr-wrap">
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for session QR...</p>
+              </div>
+            )}
+
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function KewlCardGameTableView({ onBackToMenu }) {
+  const gameId = "kewl-card-game";
+  const [wsUrl] = useState(makeWsUrl());
+  const [status, setStatus] = useState("disconnected");
+  const [sessionInfo, setSessionInfo] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignPromptOpen, setCampaignPromptOpen] = useState(true);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignError, setCampaignError] = useState(null);
+  const [publicState, setPublicState] = useState(null);
+  const [error, setError] = useState(null);
+  const [tableHitFx, setTableHitFx] = useState(null);
+  const [tableHeroHitFx, setTableHeroHitFx] = useState(null);
+  const [audioReady, setAudioReady] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [kickPrompt, setKickPrompt] = useState(null);
+  const [enemyInspectId, setEnemyInspectId] = useState(null);
+  const [cameraPx, setCameraPx] = useState({ x: 0, y: 0 });
+  const [boardViewport, setBoardViewport] = useState({ width: 0, height: 0 });
+
+  const wsRef = useRef(null);
+  const prevEnemyHpRef = useRef({});
+  const seenEnemyDamageAtRef = useRef(0);
+  const audioCtxRef = useRef(null);
+  const boardScrollRef = useRef(null);
+  const wasTurnStartRef = useRef(false);
+  const cameraPxRef = useRef({ x: 0, y: 0 });
+  const cameraAnimRef = useRef(null);
+
+  useEffect(() => {
+    setError(null);
+    setStatus("connecting");
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setStatus("connected");
+      ws.send(JSON.stringify(makeMsg(MsgType.HELLO, { role: Role.TABLE, gameId }, "hello-table")));
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.t === MsgType.CAMPAIGN_LIST) {
+          setCampaigns(Array.isArray(msg.payload?.campaigns) ? msg.payload.campaigns : []);
+        } else if (msg.t === MsgType.SESSION_INFO) {
+          setSessionInfo(msg.payload);
+          setCampaignPromptOpen(false);
+          setCampaignError(null);
+        } else if (msg.t === MsgType.STATE_PUBLIC) {
+          setPublicState(msg.payload?.state ?? null);
+        } else if (msg.t === MsgType.ERROR) {
+          setError(msg.payload?.message ?? "Unknown error");
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    ws.onclose = () => setStatus("disconnected");
+    ws.onerror = () => setStatus("error");
+
+    return () => {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    };
+  }, [wsUrl]);
+
+  function sendTableAction(action, params = {}, msgId = "table-action") {
+    setError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params }, msgId)));
+  }
+
+  function selectCampaign(campaignId) {
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, campaignId }, "campaign-select")));
+  }
+
+  function createCampaignFromName() {
+    const title = campaignName.trim();
+    if (!title) {
+      setCampaignError("Enter a campaign name.");
+      return;
+    }
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, title }, "campaign-select")));
+    setCampaignName("");
+  }
+  function spawnEnemyForTesting() {
+    sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
+  }
+
+  function undoLastAction() {
+    sendTableAction(ActionType.UNDO, {}, "undo-action");
+  }
+
+  function startNewCampaign() {
+    const confirmed = window.confirm(
+      "Start a new campaign? This clears the current run, removes all seated players, and requires everyone to rejoin."
+    );
+    if (!confirmed) return;
+    setKickPrompt(null);
+    setEnemyInspectId(null);
+    setQrOpen(false);
+    sendTableAction(ActionType.NEW_CAMPAIGN, {}, "new-campaign");
+  }
+
+  function kickPlayer(playerId, playerName) {
+    if (!playerId) return;
+    setKickPrompt({ playerId, playerName: playerName || playerId.slice(0, 4) });
+  }
+
+  function confirmKickPlayer() {
+    if (!kickPrompt?.playerId) return;
+    sendTableAction(ActionType.KICK_PLAYER, { playerId: kickPrompt.playerId }, "kick-player");
+    setKickPrompt(null);
+  }
+
+  function ensureAudioContext() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+    return audioCtxRef.current;
+  }
+
+  function unlockAudio() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "running") {
+      setAudioReady(true);
+      return;
+    }
+    ctx
+      .resume()
+      .then(() => {
+        setAudioReady(ctx.state === "running");
+      })
+      .catch(() => {});
+  }
+
+  function playHitSound() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    if (ctx.state !== "running") {
+      unlockAudio();
+      return;
+    }
+
+    setAudioReady(true);
+    const t = ctx.currentTime;
+
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-28, t);
+    compressor.knee.setValueAtTime(24, t);
+    compressor.ratio.setValueAtTime(10, t);
+    compressor.attack.setValueAtTime(0.003, t);
+    compressor.release.setValueAtTime(0.14, t);
+
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(1.25, t);
+    master.connect(compressor).connect(ctx.destination);
+
+    const strike = (start, f0, f1, peak, type, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(f0, start);
+      osc.frequency.exponentialRampToValueAtTime(f1, start + dur);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(peak, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+      osc.connect(gain).connect(master);
+      osc.start(start);
+      osc.stop(start + dur + 0.02);
+    };
+
+    strike(t, 360, 120, 0.65, "triangle", 0.19);
+    strike(t + 0.065, 300, 100, 0.5, "sawtooth", 0.16);
+    strike(t, 95, 70, 0.22, "square", 0.2);
+
+    const noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.09), ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.5;
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = "highpass";
+    noiseFilter.frequency.setValueAtTime(1000, t);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    noise.connect(noiseFilter).connect(noiseGain).connect(master);
+    noise.start(t);
+    noise.stop(t + 0.1);
+  }
+
+  const joinUrl = withGameParam(sessionInfo?.joinUrl || "", "kewl-card-game");
+  const campaignTitle = sessionInfo?.campaign?.title || '';
+  const showCampaignPrompt = campaignPromptOpen;
+  const game = publicState?.game || null;
+  const terrainSeed = game?.terrain?.seed ?? 0;
+  const terrainTheme = game?.terrain?.theme || "frostwild-frontier";
+  const scenario = game?.scenario || null;
+  const heroes = game?.heroes || [];
+  const enemies = game?.enemies || (game?.enemy ? [game.enemy] : []);
+  const groundLoot = game?.groundLoot || [];
+  const livingEnemies = enemies.filter((e) => e && e.hp > 0);
+  const heroByOwnerId = new Map(heroes.map((h) => [h.ownerPlayerId, h]));
+  const primaryEnemy = livingEnemies[0] || null;
+  const log = game?.log || [];
+  const activePlayerId = game?.turn?.activePlayerId || null;
+  const apMax = game?.turn?.apMax ?? 0;
+  const apRemaining = game?.turn?.apRemaining ?? 0;
+  const enemyCount = livingEnemies.length;
+  const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
+
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+    window.addEventListener("touchstart", unlockAudio);
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextEnemies = (publicState?.game?.enemies || (publicState?.game?.enemy ? [publicState.game.enemy] : [])).filter((e) => e && e.id);
+    if (!nextEnemies.length) {
+      prevEnemyHpRef.current = {};
+      setEnemyInspectId(null);
+      return;
+    }
+
+    const prevHpById = prevEnemyHpRef.current || {};
+    const nextHpById = {};
+    let damageFx = null;
+    let timeoutId = null;
+
+    for (const enemyUnit of nextEnemies) {
+      nextHpById[enemyUnit.id] = enemyUnit.hp;
+      const prevHp = prevHpById[enemyUnit.id];
+      if (typeof prevHp === "number" && enemyUnit.hp < prevHp) {
+        const amount = prevHp - enemyUnit.hp;
+        if (!damageFx || amount > damageFx.amount) {
+          damageFx = { id: Date.now(), x: enemyUnit.x, y: enemyUnit.y, amount };
+        }
+      }
+    }
+
+    if (damageFx) {
+      setTableHitFx(damageFx);
+      playHitSound();
+      timeoutId = setTimeout(() => {
+        setTableHitFx((curr) => (curr && curr.id === damageFx.id ? null : curr));
+      }, 900);
+    }
+
+    prevEnemyHpRef.current = nextHpById;
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [publicState]);
+
+  useEffect(() => {
+    const incoming = publicState?.game?.lastEnemyDamage;
+    if (!incoming?.at || incoming.at <= seenEnemyDamageAtRef.current) return;
+    seenEnemyDamageAtRef.current = incoming.at;
+
+    const targetHero =
+      (publicState?.game?.heroes || []).find((h) => h.ownerPlayerId === incoming.targetPlayerId) || null;
+    if (!targetHero) return;
+
+    const fx = {
+      id: incoming.at,
+      targetPlayerId: incoming.targetPlayerId,
+      x: targetHero.x,
+      y: targetHero.y,
+      amount: incoming.amount,
+      heroHp: incoming.heroHp,
+      heroMaxHp: incoming.heroMaxHp
+    };
+    setTableHeroHitFx(fx);
+    playHitSound();
+
+    const t = setTimeout(() => {
+      setTableHeroHitFx((curr) => (curr && curr.id === fx.id ? null : curr));
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [publicState]);
+
+  const moveRange = game?.rules?.moveRange ?? 1;
+  const terrainCache = new Map();
+  const getTerrain = (x, y) => {
+    const key = `${x},${y}`;
+    if (!terrainCache.has(key)) terrainCache.set(key, terrainAt(x, y, terrainSeed));
+    return terrainCache.get(key);
+  };
+  const occupied = new Set();
+  for (const h of heroes) {
+    if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
+  }
+  for (const enemyUnit of livingEnemies) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
+
+  const moveOptions = new Set();
+  if (game && activeHero && activeHero.hp > 0 && apRemaining > 0) {
+    const inBounds = () => true;
+    const isBlocked = (x, y) => occupied.has(`${x},${y}`) || !getTerrain(x, y).passable;
+    const opts = hexWithinRange({ x: activeHero.x, y: activeHero.y }, moveRange, inBounds, isBlocked);
+    for (const k of opts) moveOptions.add(k);
+  }
+
+  const HEX_SIZE = 34;
+  const HEX_W = HEX_SIZE * 2;
+  const HEX_H = Math.sqrt(3) * HEX_SIZE;
+  const HEX_STEP_X = HEX_SIZE * 1.5;
+  const VIEW_PAD = 3;
+
+  useEffect(() => {
+    const updateViewport = () => {
+      const board = boardScrollRef.current;
+      if (!board) return;
+      setBoardViewport({ width: board.clientWidth, height: board.clientHeight });
+    };
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  useEffect(() => {
+    cameraPxRef.current = cameraPx;
+  }, [cameraPx]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraAnimRef.current !== null) {
+        cancelAnimationFrame(cameraAnimRef.current);
+        cameraAnimRef.current = null;
+      }
+    };
+  }, []);
+
+  function easeInOutSmootherstep(t) {
+    // Smoother than cubic: zero slope and zero acceleration at both ends.
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  function animateCameraTo(target, durationMs = 600) {
+    if (!target) return;
+    if (cameraAnimRef.current !== null) {
+      cancelAnimationFrame(cameraAnimRef.current);
+      cameraAnimRef.current = null;
+    }
+
+    const from = cameraPxRef.current;
+    const dx = target.x - from.x;
+    const dy = target.y - from.y;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+
+    const startTs = performance.now();
+    const run = (ts) => {
+      const raw = Math.min(1, (ts - startTs) / Math.max(1, durationMs));
+      const t = easeInOutSmootherstep(raw);
+      const next = {
+        x: from.x + dx * t,
+        y: from.y + dy * t
+      };
+      cameraPxRef.current = next;
+      setCameraPx(next);
+      if (raw < 1) {
+        cameraAnimRef.current = requestAnimationFrame(run);
+      } else {
+        cameraAnimRef.current = null;
+      }
+    };
+
+    cameraAnimRef.current = requestAnimationFrame(run);
+  }
+
+  function centerCameraOnUnit(unit) {
+    if (!unit) return;
+    animateCameraTo({
+      x: unit.x * HEX_STEP_X,
+      y: unit.y * HEX_H + (unit.x % 2 !== 0 ? HEX_H / 2 : 0)
+    }, 700);
+  }
+
+  useEffect(() => {
+    const isTurnStart = apMax > 0 && apRemaining === apMax;
+    if (isTurnStart && !wasTurnStartRef.current) {
+      const focus =
+        (activeHero && activeHero.hp > 0 ? activeHero : null) ||
+        (primaryEnemy && primaryEnemy.hp > 0 ? primaryEnemy : null) ||
+        heroes.find((h) => h.hp > 0) ||
+        null;
+      centerCameraOnUnit(focus);
+    }
+    wasTurnStartRef.current = isTurnStart;
+  }, [activeHero, heroes, primaryEnemy, apRemaining, apMax, HEX_H, HEX_STEP_X]);
+
+  const viewportW = boardViewport.width || 1;
+  const viewportH = boardViewport.height || 1;
+  const worldLeft = cameraPx.x - viewportW / 2;
+  const worldTop = cameraPx.y - viewportH / 2;
+  const worldRight = cameraPx.x + viewportW / 2;
+  const worldBottom = cameraPx.y + viewportH / 2;
+
+  const visibleMinX = Math.floor(worldLeft / HEX_STEP_X) - VIEW_PAD;
+  const visibleMaxX = Math.ceil(worldRight / HEX_STEP_X) + VIEW_PAD;
+  const visibleMinY = Math.floor(worldTop / HEX_H) - VIEW_PAD;
+  const visibleMaxY = Math.ceil(worldBottom / HEX_H) + VIEW_PAD;
+
+  function panBoardBy(dx, dy) {
+    const curr = cameraPxRef.current;
+    animateCameraTo({ x: curr.x + dx, y: curr.y + dy }, 760);
+  }
+
+  function heroGlyph(hero) {
+    const name = hero.ownerPlayerName || "";
+    const initials = name
+      ? name
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0].toUpperCase())
+          .join("")
+      : (hero.ownerPlayerId || "").slice(0, 2).toUpperCase();
+    return `H-${initials}`;
+  }
+
+  function enemyProfile(enemyUnit) {
+    if (!enemyUnit) return null;
+    return {
+      name: enemyUnit.name || "Unknown Hostile",
+      level: enemyUnit.level || 1,
+      tier: enemyUnit.tier || "common",
+      art: enemyUnit.art || "👹",
+      flavor: enemyUnit.flavor || "A dangerous foe with unstable behavior.",
+      hp: `${enemyUnit.hp}/${enemyUnit.maxHp}`,
+      attackPower: enemyUnit.attackPower ?? game?.rules?.enemyDamage ?? "-"
+    };
+  }
+
+  function renderTerrainTexture(terrain, width, height, textureId) {
+    if (!terrain) return null;
+
+    if (terrain.id === "grassland" || terrain.id === "high_grass") {
+      return (
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={GRASSLAND_TEXTURE_URL}
+                x="0"
+                y="0"
+                width={width}
+                height={height}
+                preserveAspectRatio="xMidYMid slice"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            opacity={0.52}
+          />
+        </>
+      );
+    }
+
+    if (terrain.id === "mudflat") {
+      return (
+        <g stroke="rgba(187, 157, 121, 0.34)" strokeWidth="1.6" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.24} ${height * 0.38} Q${width * 0.42} ${height * 0.3} ${width * 0.66} ${height * 0.36}`} />
+          <path d={`M${width * 0.28} ${height * 0.58} Q${width * 0.5} ${height * 0.5} ${width * 0.72} ${height * 0.6}`} />
+          <path d={`M${width * 0.3} ${height * 0.76} Q${width * 0.46} ${height * 0.68} ${width * 0.64} ${height * 0.74}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "frozen_scree") {
+      return (
+        <g fill="none" stroke="rgba(217, 230, 244, 0.35)" strokeWidth="1.4" strokeLinecap="round">
+          <path d={`M${width * 0.26} ${height * 0.32} L${width * 0.36} ${height * 0.24} L${width * 0.42} ${height * 0.34}`} />
+          <path d={`M${width * 0.52} ${height * 0.3} L${width * 0.64} ${height * 0.2} L${width * 0.7} ${height * 0.32}`} />
+          <path d={`M${width * 0.34} ${height * 0.66} L${width * 0.46} ${height * 0.56} L${width * 0.54} ${height * 0.7}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "thornbrush") {
+      return (
+        <g stroke="rgba(205, 145, 104, 0.42)" strokeWidth="1.6" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.24} ${height * 0.74} L${width * 0.42} ${height * 0.32}`} />
+          <path d={`M${width * 0.36} ${height * 0.78} L${width * 0.52} ${height * 0.4}`} />
+          <path d={`M${width * 0.56} ${height * 0.76} L${width * 0.72} ${height * 0.34}`} />
+          <path d={`M${width * 0.3} ${height * 0.56} L${width * 0.7} ${height * 0.6}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "shallow_water" || terrain.id === "deep_water") {
+      return (
+        <g stroke="rgba(177, 220, 248, 0.36)" strokeWidth="1.5" fill="none" strokeLinecap="round">
+          <path d={`M${width * 0.2} ${height * 0.36} Q${width * 0.3} ${height * 0.28} ${width * 0.4} ${height * 0.36} T${width * 0.6} ${height * 0.36} T${width * 0.8} ${height * 0.36}`} />
+          <path d={`M${width * 0.18} ${height * 0.56} Q${width * 0.28} ${height * 0.48} ${width * 0.38} ${height * 0.56} T${width * 0.58} ${height * 0.56} T${width * 0.78} ${height * 0.56}`} />
+          <path d={`M${width * 0.24} ${height * 0.74} Q${width * 0.34} ${height * 0.66} ${width * 0.44} ${height * 0.74} T${width * 0.64} ${height * 0.74}`} />
+        </g>
+      );
+    }
+
+    if (terrain.id === "boulder") {
+      return (
+        <g fill="none" stroke="rgba(215, 225, 236, 0.3)" strokeWidth="1.4">
+          <ellipse cx={width * 0.38} cy={height * 0.52} rx={width * 0.11} ry={height * 0.14} />
+          <ellipse cx={width * 0.58} cy={height * 0.44} rx={width * 0.1} ry={height * 0.13} />
+          <ellipse cx={width * 0.52} cy={height * 0.66} rx={width * 0.12} ry={height * 0.1} />
+        </g>
+      );
+    }
+
+    return null;
+  }
+
+  const viewedEnemy = enemyProfile(
+    livingEnemies.find((e) => e.id === enemyInspectId) || primaryEnemy
+  );
+
+  return (
+    <div className="ttd-root">
+      <style>{`
+        :root {
+          --ttd-ink: #e6edf4;
+          --ttd-sub: #9db0c3;
+          --ttd-brand: #20bfb7;
+          --ttd-brand-2: #4a86d6;
+          --ttd-danger: #ff6b6b;
+          --ttd-card: rgba(16, 23, 32, 0.9);
+          --ttd-border: rgba(148, 166, 186, 0.18);
+        }
+        html, body, #root {
+          margin: 0;
+          width: 100%;
+          min-height: 100%;
+        }
+        body {
+          background: #0d131a;
+        }
+        .ttd-root {
+          min-height: 100dvh;
+          width: 100%;
+          color: var(--ttd-ink);
+          background:
+            radial-gradient(circle at 0% 0%, rgba(32, 191, 183, 0.16), transparent 42%),
+            radial-gradient(circle at 100% 0%, rgba(74, 134, 214, 0.18), transparent 45%),
+            linear-gradient(160deg, #0d131a 0%, #121a22 50%, #101821 100%);
+          font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+          padding: 16px;
+          box-sizing: border-box;
+        }
+        .ttd-shell {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .ttd-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          background: linear-gradient(130deg, rgba(28, 37, 48, 0.95), rgba(16, 23, 32, 0.9));
+          border: 1px solid var(--ttd-border);
+          border-radius: 18px;
+          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+          padding: 12px 14px;
+        }
+        .ttd-title {
+          margin: 0;
+          font-size: clamp(1.15rem, 2.2vw, 1.75rem);
+          font-weight: 820;
+          letter-spacing: 0.2px;
+        }
+        .ttd-header-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .ttd-status {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          border-radius: 999px;
+          border: 1px solid var(--ttd-border);
+          background: rgba(18, 26, 36, 0.8);
+          padding: 6px 10px;
+          font-weight: 700;
+          font-size: 0.84rem;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+        }
+        .ttd-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          box-shadow: 0 0 0 4px rgba(0,0,0,0.28);
+        }
+        .ttd-layout {
+          display: grid;
+          grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+          gap: 12px;
+          align-items: start;
+        }
+        .ttd-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .ttd-section-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin: 0 0 10px;
+          font-size: 1.02rem;
+          font-weight: 800;
+        }
+        .ttd-action-row {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .ttd-btn {
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: #1a2430;
+          color: var(--ttd-ink);
+          border-radius: 10px;
+          font-weight: 700;
+          padding: 8px 12px;
+          cursor: pointer;
+        }
+        .ttd-btn.primary {
+          background: linear-gradient(135deg, var(--ttd-brand), var(--ttd-brand-2));
+          color: #fff;
+          border: none;
+        }
+        .ttd-btn.warn {
+          color: #ff9a9a;
+          border-color: rgba(255, 107, 107, 0.4);
+          background: rgba(255, 107, 107, 0.14);
+          padding: 3px 8px;
+          border-radius: 8px;
+        }
+        .ttd-btn.danger {
+          color: #ffffff;
+          border-color: rgba(255, 107, 107, 0.35);
+          background: linear-gradient(135deg, #ff6b6b, #c94545);
+        }
+        .ttd-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          padding: 4px 9px;
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.75);
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: var(--ttd-sub);
+        }
+        .ttd-players {
+          list-style: none;
+          margin: 0;
+          padding: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .ttd-player {
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          border-radius: 12px;
+          padding: 8px 10px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          background: rgba(18, 26, 36, 0.7);
+        }
+        .ttd-seat {
+          color: var(--ttd-sub);
+          font-size: 0.78rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          font-weight: 700;
+          display: block;
+          margin-bottom: 2px;
+        }
+        .ttd-name {
+          font-weight: 700;
+          font-size: 0.95rem;
+        }
+        .ttd-stat-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .ttd-stat {
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          border-radius: 12px;
+          padding: 8px 10px;
+          background: rgba(18, 26, 36, 0.8);
+        }
+        .ttd-stat label {
+          display: block;
+          color: var(--ttd-sub);
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 2px;
+          font-weight: 700;
+        }
+        .ttd-stat strong {
+          font-size: 1.08rem;
+        }
+        .ttd-log {
+          margin: 0;
+          padding-left: 18px;
+          max-height: 240px;
+          overflow: auto;
+        }
+        .ttd-log li {
+          margin-bottom: 6px;
+          color: var(--ttd-sub);
+        }
+        .ttd-board-shell {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          min-height: 78vh;
+        }
+        .ttd-board-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .ttd-board-scroll {
+          flex: 1;
+          min-height: 68vh;
+          overflow: hidden;
+          position: relative;
+          border-radius: 12px;
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          background: linear-gradient(180deg, rgba(15, 22, 30, 0.95), rgba(19, 28, 38, 0.95));
+          padding: 12px;
+        }
+        .ttd-board-canvas {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          min-height: 64vh;
+          touch-action: none;
+        }
+        .ttd-pan-btn {
+          position: absolute;
+          z-index: 5;
+          width: 42px;
+          height: 42px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 166, 186, 0.35);
+          background: rgba(18, 26, 36, 0.92);
+          color: #d7e5f3;
+          font-size: 1.1rem;
+          font-weight: 800;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+          backdrop-filter: blur(2px);
+        }
+        .ttd-pan-btn:hover {
+          background: rgba(25, 35, 47, 0.96);
+        }
+        .ttd-pan-top {
+          top: 14px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .ttd-pan-right {
+          right: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+        .ttd-pan-bottom {
+          bottom: 14px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .ttd-pan-left {
+          left: 14px;
+          top: 50%;
+          transform: translateY(-50%);
+        }
+        .ttd-error {
+          border: 1px solid rgba(255, 107, 107, 0.4);
+          background: rgba(42, 20, 22, 0.92);
+          color: #ffb5b5;
+          border-radius: 12px;
+          padding: 10px 12px;
+          font-weight: 600;
+          white-space: pre-wrap;
+        }
+        .ttd-modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(8, 18, 32, 0.52);
+          display: grid;
+          place-items: center;
+          padding: 16px;
+          z-index: 20;
+        }
+        .ttd-modal {
+          width: min(420px, 96vw);
+          border-radius: 18px;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: #141c26;
+          box-shadow: 0 22px 60px rgba(0, 0, 0, 0.5);
+          padding: 14px;
+        }
+        .ttd-modal-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+        .ttd-modal h3 {
+          margin: 0;
+          font-size: 1.1rem;
+        }
+        .ttd-qr-wrap {
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          border-radius: 14px;
+          padding: 14px;
+          display: grid;
+          place-items: center;
+          margin-bottom: 12px;
+          background: #111821;
+        }
+        .ttd-enemy-art {
+          border: 1px solid rgba(148, 166, 186, 0.18);
+          border-radius: 14px;
+          background: linear-gradient(140deg, rgba(24, 36, 48, 0.9), rgba(42, 24, 28, 0.9));
+          display: grid;
+          place-items: center;
+          font-size: 72px;
+          height: 148px;
+          margin-bottom: 10px;
+        }
+        @media (max-width: 1060px) {
+          .ttd-layout {
+            grid-template-columns: 1fr;
+          }
+        }
+        @keyframes tvHitPulse {
+          0% { transform: scale(1); opacity: 1; }
+          100% { transform: scale(1.1); opacity: 0; }
+        }
+        @keyframes tvHitFloat {
+          0% { transform: translateY(0); opacity: 1; }
+          100% { transform: translateY(-22px); opacity: 0; }
+        }
+      `}</style>
+
+      <div className="ttd-shell">
+        <header className="ttd-header">
+          <div>
+            <h1 className="ttd-title">Kewl Card Game</h1>
+            <div style={{ marginTop: 6, color: "var(--ttd-sub)", fontWeight: 700 }}>Campaign: {campaignTitle || "Select a campaign"}</div>
+          </div>
+          <div className="ttd-header-meta">
+            <button className="ttd-btn" onClick={onBackToMenu}>
+              Game Menu
+            </button>
+            <span className="ttd-pill">AP: <span style={mono}>{apRemaining}/{apMax}</span></span>
+            <div className="ttd-status">
+              <span className="ttd-dot" style={{ background: statusColor(status) }} />
+              {status}
+            </div>
+          </div>
+        </header>
+
+        {error ? <div className="ttd-error">{error}</div> : null}
+
+        <div className="ttd-layout">
+          <div className="ttd-stack">
+            <section style={panelStyle}>
+              <h2 className="ttd-section-title">
+                <Icon path="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M15 15h1 M17 15h3 M15 17h5 M15 19h2 M19 19h1" />
+                Session
+              </h2>
+              <div className="ttd-action-row">
+                <button className="ttd-btn primary" onClick={() => setQrOpen(true)} disabled={!sessionInfo}>
+                  Show QR
+                </button>
+                <button className="ttd-btn" onClick={spawnEnemyForTesting}>
+                  Spawn Random Monster
+                </button>
+                <button className="ttd-btn" onClick={undoLastAction} disabled={!game}>
+                  Undo Last Action
+                </button>
+                <button className="ttd-btn danger" onClick={startNewCampaign}>
+                  New Campaign
+                </button>
+                <button className="ttd-btn" onClick={() => setCampaignPromptOpen(true)}>
+                  Switch Campaign
+                </button>
+                <button
+                  className="ttd-btn"
+                  onClick={() => {
+                    unlockAudio();
+                    playHitSound();
+                  }}
+                >
+                  Test Hit Sound
+                </button>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <span className="ttd-pill">SFX: {audioReady ? "ready" : "tap once to enable"}</span>
+              </div>
+            </section>
+
+            <section style={panelStyle}>
+              <h2 className="ttd-section-title">
+                <Icon path="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M8.5 7a4 4 0 1 0 0 .01 M20 8v6 M17 11h6" />
+                Players
+                <span className="ttd-pill">{heroes.length} heroes</span>
+              </h2>
+              {publicState?.seats ? (
+                <ul className="ttd-players">
+                  {publicState.seats.map((seat) => (
+                    <li key={seat.seat} className="ttd-player">
+                      <div style={{ minWidth: 0 }}>
+                        <span className="ttd-seat">Seat {seat.seat}</span>
+                        <span className="ttd-name" style={{ opacity: seat.occupied ? 1 : 0.5 }}>
+                          {seat.occupied ? seat.playerName : "Empty"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {seat.playerId && heroByOwnerId.get(seat.playerId) ? (
+                          <span className="ttd-pill">
+                            {heroByOwnerId.get(seat.playerId).hp}/{heroByOwnerId.get(seat.playerId).maxHp}
+                          </span>
+                        ) : null}
+                        {seat.playerId && activePlayerId === seat.playerId ? <span className="ttd-pill">Active</span> : null}
+                        {seat.occupied && seat.playerId ? (
+                          <button className="ttd-btn warn" onClick={() => kickPlayer(seat.playerId, seat.playerName)}>
+                            Kick
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for players...</p>
+              )}
+            </section>
+
+            <section style={panelStyle}>
+              <h2 className="ttd-section-title">
+                <Icon path="M4 20l8-16 8 16 M7 14h10" />
+                Encounter
+              </h2>
+              {game ? (
+                <div className="ttd-stat-grid">
+                  <div className="ttd-stat">
+                    <label>Enemies Alive</label>
+                    <strong style={mono}>{enemyCount}</strong>
+                  </div>
+                  <div className="ttd-stat">
+                    <label>Scenario Goal</label>
+                    <strong style={mono}>
+                      {scenario?.objective?.targetCount
+                        ? `${scenario?.defeatedCount || 0}/${scenario.objective.targetCount} defeated`
+                        : "In progress"}
+                    </strong>
+                    <div style={{ marginTop: 4, color: "var(--ttd-sub)", fontSize: "0.75rem", fontWeight: 700 }}>
+                      {scenario?.status === "victory" ? "Victory" : "Active"}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No encounter yet.</p>
+              )}
+            </section>
+
+            <section style={panelStyle}>
+              <h2 className="ttd-section-title">
+                <Icon path="M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                Event Log
+              </h2>
+              {log.length ? (
+                <ul className="ttd-log">
+                  {log
+                    .slice()
+                    .reverse()
+                    .map((entry, idx) => (
+                      <li key={idx}>{entry.msg}</li>
+                    ))}
+                </ul>
+              ) : (
+                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No events yet.</p>
+              )}
+            </section>
+          </div>
+
+          <section
+            style={{
+              ...panelStyle,
+              border: "1px solid rgba(32, 191, 183, 0.3)",
+              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)"
+            }}
+            className="ttd-board-shell"
+          >
+            <div className="ttd-board-head">
+              <h2 className="ttd-section-title" style={{ marginBottom: 0 }}>
+                <Icon path="M3 6h18 M3 12h18 M3 18h18 M6 3v18 M12 3v18 M18 3v18" />
+                Board
+              </h2>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span className="ttd-pill">Live View</span>
+                <span className="ttd-pill">Terrain: {terrainTheme}</span>
+              </div>
+            </div>
+            <div className="ttd-board-scroll" ref={boardScrollRef}>
+              <button
+                className="ttd-pan-btn ttd-pan-top"
+                aria-label="Scroll board up"
+                onClick={() => panBoardBy(0, -(boardViewport.height || 240) * 0.5)}
+              >
+                N
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-right"
+                aria-label="Scroll board right"
+                onClick={() => panBoardBy((boardViewport.width || 300) * 0.5, 0)}
+              >
+                E
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-bottom"
+                aria-label="Scroll board down"
+                onClick={() => panBoardBy(0, (boardViewport.height || 240) * 0.5)}
+              >
+                S
+              </button>
+              <button
+                className="ttd-pan-btn ttd-pan-left"
+                aria-label="Scroll board left"
+                onClick={() => panBoardBy(-(boardViewport.width || 300) * 0.5, 0)}
+              >
+                W
+              </button>
+
+              <div className="ttd-board-canvas">
+                {Array.from({ length: visibleMaxX - visibleMinX + 1 }).map((_, xi) => {
+                  const x = visibleMinX + xi;
+                  return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
+                    const y = visibleMinY + yi;
+                    const terrain = getTerrain(x, y);
+                    const terrainTextureId = `ttd-terrain-${x}-${y}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+                    const heroHere = heroes.find((h) => h.x === x && h.y === y) || null;
+                    const enemyHere = livingEnemies.find((e) => e.x === x && e.y === y) || null;
+                    const lootHere = groundLoot.find((l) => l.x === x && l.y === y) || null;
+                    const isEnemy = Boolean(enemyHere);
+                    const isLoot = Boolean(lootHere);
+                    const isActiveCell = heroHere && heroHere.ownerPlayerId === activePlayerId;
+                    const isHeroDown = Boolean(heroHere && heroHere.hp <= 0);
+                    const isBlockedTerrain = !terrain.passable;
+
+                    const worldX = x * HEX_STEP_X;
+                    const worldY = y * HEX_H + (x % 2 !== 0 ? HEX_H / 2 : 0);
+                    const left = worldX - cameraPx.x + boardViewport.width / 2;
+                    const top = worldY - cameraPx.y + boardViewport.height / 2;
+
+                    const label = heroHere
+                      ? isHeroDown
+                        ? "DOWN"
+                        : heroGlyph(heroHere)
+                      : isEnemy
+                        ? `E${enemyHere.level || 1}`
+                        : isLoot
+                          ? "LOOT"
+                          : isBlockedTerrain
+                            ? "X"
+                            : "";
+                    const isMoveOption = moveOptions.has(`${x},${y}`);
+                    const isHitCell = tableHitFx && tableHitFx.x === x && tableHitFx.y === y;
+                    const isHeroHitCell =
+                      tableHeroHitFx && heroHere && tableHeroHitFx.targetPlayerId === heroHere.ownerPlayerId;
+
+                    const bg = isHeroDown
+                      ? "rgba(110, 64, 44, 0.3)"
+                      : isEnemy
+                      ? "rgba(255, 107, 107, 0.2)"
+                      : isLoot
+                        ? "rgba(255, 197, 87, 0.22)"
+                      : terrain.fill;
+
+                    const stroke = isHeroDown
+                      ? "rgba(214, 138, 104, 0.7)"
+                      : isEnemy
+                      ? "rgba(255, 136, 136, 0.5)"
+                      : isLoot
+                        ? "rgba(255, 201, 94, 0.62)"
+                      : isActiveCell
+                        ? "rgba(76, 214, 138, 0.72)"
+                        : "rgba(255, 255, 255, 0.24)";
+                    const strokeWidth = isActiveCell ? 2 : 0.9;
+
+                    return (
+                      <div
+                        key={`${x},${y}`}
+                        onClick={() => {
+                          if (enemyHere) setEnemyInspectId(enemyHere.id);
+                        }}
+                        title={isEnemy ? "Show enemy details" : undefined}
+                        style={{
+                          position: "absolute",
+                          left,
+                          top,
+                          width: HEX_W,
+                          height: HEX_H,
+                          pointerEvents: isEnemy ? "auto" : "none",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          userSelect: "none",
+                          fontSize: 11,
+                          padding: 4,
+                          color: "var(--ttd-ink)",
+                          fontWeight: 800,
+                          cursor: isEnemy ? "pointer" : "default"
+                        }}
+                      >
+                        <svg
+                          width={HEX_W}
+                          height={HEX_H}
+                          viewBox={`0 0 ${HEX_W} ${HEX_H}`}
+                          aria-hidden="true"
+                          style={{ position: "absolute", inset: 0 }}
+                        >
+                          <polygon
+                            points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                            fill={bg}
+                            stroke={stroke}
+                            strokeWidth={strokeWidth}
+                          />
+                          {!isEnemy ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill={terrain.accent}
+                              opacity={0.22}
+                            />
+                          ) : null}
+                          {!isEnemy ? renderTerrainTexture(terrain, HEX_W, HEX_H, terrainTextureId) : null}
+                          {isBlockedTerrain ? (
+                            <>
+                              <line x1={HEX_W * 0.28} y1={HEX_H * 0.22} x2={HEX_W * 0.72} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                              <line x1={HEX_W * 0.72} y1={HEX_H * 0.22} x2={HEX_W * 0.28} y2={HEX_H * 0.78} stroke="rgba(225, 233, 241, 0.36)" strokeWidth="2.2" />
+                            </>
+                          ) : null}
+                          {isMoveOption ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill="none"
+                              stroke="rgba(32, 191, 183, 0.6)"
+                              strokeWidth="3"
+                            />
+                          ) : null}
+                          {isHitCell ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill="none"
+                              stroke="rgba(255, 107, 107, 0.9)"
+                              strokeWidth="4"
+                              style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.65s ease-out forwards" }}
+                            />
+                          ) : null}
+                          {isHeroHitCell ? (
+                            <polygon
+                              points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
+                              fill="none"
+                              stroke="rgba(255, 170, 112, 0.95)"
+                              strokeWidth="4"
+                              style={{ transformOrigin: "50% 50%", animation: "tvHitPulse 0.8s ease-out forwards" }}
+                            />
+                          ) : null}
+                        </svg>
+                        <div style={{ position: "relative", textAlign: "center", lineHeight: 1.05 }}>
+                          <div>{label}</div>
+                          {isEnemy ? (
+                            <div style={{ marginTop: 3, minWidth: 42 }}>
+                              <div
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 900,
+                                  color: "#ffd7d7",
+                                  textShadow: "0 1px 2px rgba(0,0,0,0.55)"
+                                }}
+                              >
+                                L{enemyHere.level || 1} {enemyHere.hp}/{enemyHere.maxHp}
+                              </div>
+                              <div
+                                style={{
+                                  marginTop: 2,
+                                  width: 42,
+                                  height: 5,
+                                  borderRadius: 999,
+                                  background: "rgba(18, 24, 32, 0.85)",
+                                  border: "1px solid rgba(255, 255, 255, 0.2)",
+                                  overflow: "hidden"
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.max(0, Math.min(100, (enemyHere.hp / Math.max(1, enemyHere.maxHp)) * 100))}%`,
+                                    height: "100%",
+                                    background: "linear-gradient(90deg, #ff7f7f, #ff4f4f)"
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        {isHitCell ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: -8,
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: "rgba(18, 24, 32, 0.95)",
+                              border: "1px solid rgba(255, 107, 107, 0.45)",
+                              color: "#ff8b8b",
+                              fontWeight: 800,
+                              animation: "tvHitFloat 0.9s ease-out forwards"
+                            }}
+                          >
+                            -{tableHitFx.amount}
+                          </div>
+                        ) : null}
+                        {isHeroHitCell ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: -32,
+                              padding: "2px 8px",
+                              borderRadius: 999,
+                              background: "rgba(18, 24, 32, 0.95)",
+                              border: "1px solid rgba(255, 170, 112, 0.5)",
+                              color: "#ffbd8f",
+                              fontWeight: 900,
+                              animation: "tvHitFloat 1.1s ease-out forwards"
+                            }}
+                          >
+                            -{tableHeroHitFx.amount} HP ({tableHeroHitFx.heroHp}/{tableHeroHitFx.heroMaxHp})
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  });
+                })}
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {showCampaignPrompt ? (
+        <div className="ttd-modal-backdrop" onClick={() => {}}>
+          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="ttd-modal-head">
+              <h3>Choose Campaign</h3>
+            </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Start new</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={campaignName}
+                    placeholder="Campaign name"
+                    onChange={(e) => setCampaignName(e.target.value)}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(148, 166, 186, 0.35)", background: "rgba(12, 18, 26, 0.65)", color: "var(--ttd-ink)" }}
+                  />
+                  <button className="ttd-btn primary" onClick={createCampaignFromName}>
+                    Start
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Load existing</div>
+                <div style={{ display: "grid", gap: 6, maxHeight: 260, overflow: "auto" }}>
+                  {campaigns.length ? (
+                    campaigns.map((c) => (
+                      <button key={c.id} className="ttd-btn" onClick={() => selectCampaign(c.id)}>
+                        {c.title}
+                      </button>
+                    ))
+                  ) : (
+                    <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
+                  )}
+                </div>
+              </div>
+              {campaignError ? <div style={{ color: "#f1b2b2", fontSize: "0.9rem" }}>{campaignError}</div> : null}
+              {sessionInfo ? (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button className="ttd-btn" onClick={() => setCampaignPromptOpen(false)}>
+                    Close
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {enemyInspectId ? (
         <div className="ttd-modal-backdrop" onClick={() => setEnemyInspectId(null)}>
           <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
@@ -2914,6 +4439,9 @@ export default function App() {
   if (activeGameId === "touchtable-dungeon") {
     return <DungeonTableView onBackToMenu={() => setActiveGameId(null)} />;
   }
+  if (activeGameId === "kewl-card-game") {
+    return <KewlCardGameTableView onBackToMenu={() => setActiveGameId(null)} />;
+  }
   if (activeGameId === "catan") {
     return <CatanTableView onBackToMenu={() => setActiveGameId(null)} />;
   }
@@ -2926,3 +4454,23 @@ export default function App() {
     />
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
