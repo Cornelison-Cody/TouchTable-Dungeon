@@ -22,6 +22,8 @@ venv/
 # Env
 .env
 .env.*
+!.env.example
+!**/.env.example
 
 # Local state
 *.sqlite

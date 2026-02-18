@@ -40,9 +40,15 @@ function getQuerySessionId() {
   return u.searchParams.get("session");
 }
 
+function getQueryWsUrl() {
+  const u = new URL(window.location.href);
+  return u.searchParams.get("ws") || u.searchParams.get("wsUrl") || u.searchParams.get("server");
+}
+
 function defaultWsUrl() {
   const host = window.location.hostname || "localhost";
-  return localStorage.getItem("tt_server_ws") || `ws://${host}:3000`;
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return localStorage.getItem("tt_server_ws") || `${scheme}://${host}:3000`;
 }
 
 function pct(hp, maxHp) {
@@ -60,7 +66,16 @@ function dropsText(obj = {}) {
 }
 
 export default function App() {
-  const [wsUrl, setWsUrl] = useState(defaultWsUrl());
+  const initialWsUrl = useMemo(() => {
+    const fromQuery = getQueryWsUrl();
+    if (fromQuery) {
+      localStorage.setItem("tt_server_ws", fromQuery);
+      return fromQuery;
+    }
+    return defaultWsUrl();
+  }, []);
+
+  const [wsUrl, setWsUrl] = useState(initialWsUrl);
   const [status, setStatus] = useState("disconnected");
   const [error, setError] = useState(null);
   const [clientId, setClientId] = useState(null);

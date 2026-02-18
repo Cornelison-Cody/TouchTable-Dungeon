@@ -68,6 +68,8 @@ Later: migrate to SQLite for robustness and querying.
   - `http://<device-ip>:<port>`
   - or `http://touchtable.local:<port>` (mDNS optional)
 - Join uses QR + session code + optional PIN per seat
+- For internet/screen-share sessions, set `TT_PUBLIC_JOIN_URL` (or `TT_PUBLIC_HOST` + `TT_PUBLIC_SCHEME` + `TT_PUBLIC_PHONE_PORT`)
+  and optionally `TT_PUBLIC_WS_URL` so the QR points at a public address and preconfigures the phone WebSocket target.
 
 ## Failure handling
 - Phone refresh/reconnect: server re-sends latest private view

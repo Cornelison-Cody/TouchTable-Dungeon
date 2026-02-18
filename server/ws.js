@@ -26,6 +26,8 @@ import {
 } from "../shared/game.js";
 
 const BUILD_TAG = "m8h";
+const DEFAULT_PHONE_PORT = 5174;
+const DEFAULT_SERVER_PORT = 3000;
 
 
 function getLanAddress() {
@@ -36,6 +38,18 @@ function getLanAddress() {
     }
   }
   return "localhost";
+}
+
+function envString(key) {
+  const raw = process.env[key];
+  if (typeof raw !== "string") return "";
+  return raw.trim();
+}
+
+function envPort(key, fallback) {
+  const raw = Number(envString(key));
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  return Math.floor(raw);
 }
 
 function makeSession() {
@@ -348,9 +362,46 @@ export function setupWebSocket(server) {
     send(ws, makeMsg(MsgType.ERROR, { code, message }, id));
   }
 
+  function buildPublicJoinBaseUrl() {
+    const explicitBase = envString("TT_PUBLIC_JOIN_URL");
+    if (explicitBase) {
+      try {
+        return new URL(explicitBase);
+      } catch {
+        // Fall back to LAN-based URL if explicit base is invalid.
+      }
+    }
+
+    const host = envString("TT_PUBLIC_HOST") || getLanAddress();
+    const scheme = envString("TT_PUBLIC_SCHEME") || "http";
+    const port = envPort("TT_PUBLIC_PHONE_PORT", DEFAULT_PHONE_PORT);
+    const url = new URL(`${scheme}://${host}`);
+    if (![80, 443].includes(port)) url.port = String(port);
+    url.pathname = "/";
+    return url;
+  }
+
+  function buildPublicWsUrl() {
+    const explicitWs = envString("TT_PUBLIC_WS_URL");
+    if (explicitWs) return explicitWs;
+
+    const host = envString("TT_PUBLIC_WS_HOST") || envString("TT_PUBLIC_HOST");
+    if (!host) return "";
+    const scheme =
+      envString("TT_PUBLIC_WS_SCHEME") ||
+      (envString("TT_PUBLIC_SCHEME") === "https" ? "wss" : "ws");
+    const port = envPort("TT_PUBLIC_WS_PORT", envPort("PORT", DEFAULT_SERVER_PORT));
+    const url = new URL(`${scheme}://${host}`);
+    if (![80, 443].includes(port)) url.port = String(port);
+    return url.toString();
+  }
+
   function getJoinUrl() {
-    const host = getLanAddress();
-    return `http://${host}:5174/?session=${session.sessionId}`;
+    const url = buildPublicJoinBaseUrl();
+    url.searchParams.set("session", session.sessionId);
+    const wsUrl = buildPublicWsUrl();
+    if (wsUrl) url.searchParams.set("ws", wsUrl);
+    return url.toString();
   }
 
   function campaignPlayerById(playerId) {
