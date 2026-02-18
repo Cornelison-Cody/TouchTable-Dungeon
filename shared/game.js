@@ -38,7 +38,7 @@ export const TERRAIN_META = Object.freeze({
     label: "High Grass",
     className: TerrainClass.GROUND,
     passable: true,
-    moveCost: 1,
+    moveCost: 2,
     fill: "rgba(69, 113, 74, 0.94)",
     stroke: "rgba(168, 199, 141, 0.26)",
     accent: "rgba(195, 219, 160, 0.34)"
@@ -48,7 +48,7 @@ export const TERRAIN_META = Object.freeze({
     label: "Mudflat",
     className: TerrainClass.DIFFICULT,
     passable: true,
-    moveCost: 1,
+    moveCost: 2,
     fill: "rgba(86, 77, 63, 0.92)",
     stroke: "rgba(169, 145, 106, 0.28)",
     accent: "rgba(128, 111, 84, 0.34)"
@@ -58,7 +58,7 @@ export const TERRAIN_META = Object.freeze({
     label: "Frozen Scree",
     className: TerrainClass.DIFFICULT,
     passable: true,
-    moveCost: 1,
+    moveCost: 2,
     fill: "rgba(78, 88, 100, 0.9)",
     stroke: "rgba(182, 196, 214, 0.28)",
     accent: "rgba(136, 148, 162, 0.35)"
@@ -68,7 +68,7 @@ export const TERRAIN_META = Object.freeze({
     label: "Thornbrush",
     className: TerrainClass.HAZARD,
     passable: true,
-    moveCost: 1,
+    moveCost: 3,
     fill: "rgba(84, 70, 58, 0.92)",
     stroke: "rgba(190, 143, 112, 0.3)",
     accent: "rgba(158, 112, 82, 0.36)"
@@ -78,7 +78,7 @@ export const TERRAIN_META = Object.freeze({
     label: "Shallow Water",
     className: TerrainClass.WATER,
     passable: true,
-    moveCost: 1,
+    moveCost: 3,
     fill: "rgba(49, 87, 114, 0.9)",
     stroke: "rgba(129, 178, 212, 0.3)",
     accent: "rgba(96, 156, 196, 0.4)"

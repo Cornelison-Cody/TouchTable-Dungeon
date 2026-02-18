@@ -26,7 +26,8 @@ import {
   resetTurnAP,
   spawnHeroForPlayer,
   ensurePlayerInTurnOrder,
-  isHeroAlive
+  isHeroAlive,
+  terrainAt
 } from "../shared/game.js";
 
 const BUILD_TAG = "m8h";
@@ -1295,6 +1296,10 @@ export function setupWebSocket(server) {
     if (dist > game.rules.moveRange) return reject(ws, id, "OUT_OF_RANGE", `Move too far (range ${game.rules.moveRange}).`);
     if (!isTerrainPassable(nx, ny, terrainSeed)) return reject(ws, id, "BLOCKED", "Cell is blocked terrain.");
 
+    const terrain = terrainAt(nx, ny, terrainSeed);
+    const moveCost = clamp(Math.max(1, Number(terrain?.moveCost) || 1), 1, 4);
+    if ((game.turn.apRemaining ?? 0) < moveCost) return reject(ws, id, "NO_AP", `Need ${moveCost} AP to move here.`);
+
     if (cellOccupiedByLiveEnemy(nx, ny)) return reject(ws, id, "BLOCKED", "Cell occupied by enemy.");
     if (cellOccupiedByOtherHero(nx, ny, actorPlayerId)) return reject(ws, id, "BLOCKED", "Cell occupied by another hero.");
 
@@ -1420,7 +1425,7 @@ export function setupWebSocket(server) {
       at: Date.now()
     };
     game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} deals ${dealt} damage to ${target.name || "enemy"}.` });
-    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - moveCost);
     if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, dealt }, id));

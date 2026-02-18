@@ -274,7 +274,9 @@ export default function KewlCardGamePhoneApp() {
   const neighbors = active && hero && hero.hp > 0
     ? hexNeighbors(hero.x, hero.y).map((c) => {
         const t = terrainAt(c.x, c.y, terrainSeed);
-        return { ...c, t, loot: lootByCell.get(`${c.x},${c.y}`) || null, canMove: canMove && t.passable && !occupied.has(`${c.x},${c.y}`) };
+        const moveCost = Math.min(4, Math.max(1, Number(t.moveCost) || 1));
+        const canStep = canMove && t.passable && !occupied.has(`${c.x},${c.y}`) && apRemaining >= moveCost;
+        return { ...c, t, moveCost, loot: lootByCell.get(`${c.x},${c.y}`) || null, canMove: canStep };
       })
     : [];
 
@@ -402,14 +404,16 @@ export default function KewlCardGamePhoneApp() {
                       const top = 80 + (c.y - hero.y) * yStep + ((c.x % 2 ? yStep / 2 : 0) - (hero.x % 2 ? yStep / 2 : 0));
                       const enemy = visibleEnemies.find((e) => e.x === c.x && e.y === c.y) || null;
                       const tap = c.canMove;
-                      const bg = enemy ? "#472731" : c.canMove ? "#1b3b2a" : c.t.passable ? c.t.fill : "#1d2734";
+                      const bg = c.t.passable ? c.t.fill : "#1d2734";
                       const stroke = enemy ? "#c57784" : c.canMove ? "#5cb882" : c.t.stroke;
+                      const apLabel = !enemy && c.t.passable ? `AP${c.moveCost}` : "";
                       return (
                         <button key={`${c.x},${c.y}`} disabled={!tap} onClick={() => sendMove(c.x, c.y)} style={{ position: "absolute", left, top, width: W, height: H, border: "none", background: "transparent", padding: 0, cursor: tap ? "pointer" : "default", color: enemy ? theme.bad : c.canMove ? theme.good : theme.sub, fontWeight: 800, fontSize: 11 }}>
                           <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}><polygon points={P} fill={bg} stroke={stroke} strokeWidth="1.2" /></svg>
                           <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
                             <div>{enemy ? "EN" : c.canMove ? "GO" : ""}</div>
                             {enemy ? <div style={{ fontSize: 9 }}>{enemy.hp}/{enemy.maxHp}</div> : null}
+                            {!enemy && apLabel ? <div style={{ fontSize: 9 }}>{apLabel}</div> : null}
                             {c.loot && c.canMove ? <div style={{ marginTop: 1, fontSize: 10 }}>[]</div> : null}
                           </div>
                         </button>
