@@ -32,8 +32,19 @@ const card = {
 };
 
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" };
-const tabs = ["actions", "inventory", "crafting", "stats"];
-const labels = { herb: "Herb", fang: "Fang", essence: "Essence", potion: "Potion" };
+const tabs = ["actions", "inventory", "stats"];
+const labels = {
+  herb: "Herb",
+  fang: "Fang",
+  essence: "Essence",
+  potion: "Potion",
+  coal: "Coal",
+  copper: "Copper",
+  iron: "Iron",
+  crystal: "Crystal",
+  relic: "Relic"
+};
+const resourceOrder = ["coal", "copper", "iron", "crystal", "relic", "herb", "fang", "essence", "potion"];
 const STORAGE_PREFIX = "tt_kewl_card_game";
 const storageKey = (suffix) => `${STORAGE_PREFIX}_${suffix}`;
 
@@ -56,10 +67,6 @@ function defaultWsUrl() {
 function pct(hp, maxHp) {
   const m = Math.max(1, Number(maxHp) || 1);
   return `${Math.max(0, Math.min(100, ((Number(hp) || 0) / m) * 100))}%`;
-}
-
-function recipeText(obj = {}) {
-  return Object.entries(obj).map(([k, v]) => `${v} ${labels[k] || k}`).join(" + ");
 }
 
 function dropsText(obj = {}) {
@@ -90,13 +97,14 @@ export default function KewlCardGamePhoneApp() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState("actions");
 
-  const [attackTarget, setAttackTarget] = useState("");
-  const [spellTarget, setSpellTarget] = useState("");
   const [reviveTarget, setReviveTarget] = useState("");
+  const [damageTargetId, setDamageTargetId] = useState("");
+  const [damageValue, setDamageValue] = useState(1);
 
   const [hitFx, setHitFx] = useState(null);
   const [incomingFx, setIncomingFx] = useState(null);
   const [lootFx, setLootFx] = useState(null);
+  const [mineOpen, setMineOpen] = useState(false);
 
   const resumeToken = useMemo(() => localStorage.getItem(storageKey("resume_token")) || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
@@ -105,6 +113,7 @@ export default function KewlCardGamePhoneApp() {
   const seenHit = useRef(0);
   const seenIncoming = useRef(0);
   const seenLoot = useRef(0);
+  const seenMineCredits = useRef(0);
 
   useEffect(() => {
     setError(null);
@@ -191,6 +200,10 @@ export default function KewlCardGamePhoneApp() {
     ws.send(JSON.stringify(makeMsg(MsgType.ACTION, { action, params }, "act")));
   }
 
+  function sendMineDig(x, y) {
+    sendAction(ActionType.MINE_DIG, { x, y });
+  }
+
   const g = privateState?.game || null;
   const active = Boolean(g?.youAreActive);
   const hero = g?.hero || null;
@@ -200,24 +213,21 @@ export default function KewlCardGamePhoneApp() {
   const allowed = new Set(g?.allowedActions || []);
   const rpg = g?.rpg || null;
   const inventory = rpg?.inventory || {};
+  const mine = g?.mine || null;
+  const mineCredits = mine?.credits ?? 0;
+  const mineCursor = mine?.cursor || { x: 0, y: 0 };
+  const mineTiles = useMemo(() => new Map((mine?.tiles || []).map((t) => [`${t.x},${t.y}`, t])), [mine]);
+  const mineAvailable = useMemo(() => new Set((mine?.available || []).map((t) => `${t.x},${t.y}`)), [mine]);
+  const mineLastReward = mine?.lastReward || null;
   const heroesPublic = g?.heroesPublic || [];
   const reviveTargets = g?.reviveTargets || [];
-  const spellName = rpg?.spell?.name || "Arc Bolt";
-  const attackRange = Math.max(1, Number(rules.attackRange) || 1);
-  const spellRange = Math.max(1, Number(rpg?.spell?.range) || Number(rules.spellRange) || 3);
-  const craftingOptions = Array.isArray(g?.craftingOptions) ? g.craftingOptions : [];
-
   const enemies = g?.enemies || (g?.enemy ? [g.enemy] : []);
-  const visibleEnemies = hero ? enemies.filter((e) => e && e.hp > 0 && manhattan(hero, e) <= 8) : [];
-  const attackable = hero ? visibleEnemies.filter((e) => manhattan(hero, e) <= attackRange) : [];
-  const spellable = hero ? visibleEnemies.filter((e) => manhattan(hero, e) <= spellRange) : [];
-
-  useEffect(() => {
-    setAttackTarget((curr) => (attackable.some((e) => e.id === curr) ? curr : attackable[0]?.id || ""));
-  }, [attackable]);
-  useEffect(() => {
-    setSpellTarget((curr) => (spellable.some((e) => e.id === curr) ? curr : spellable[0]?.id || ""));
-  }, [spellable]);
+  const visibleEnemies = enemies.filter((e) => e && e.hp > 0);
+  const targetEnemies = hero
+    ? visibleEnemies
+        .map((e) => ({ ...e, dist: manhattan(hero, e) }))
+        .sort((a, b) => a.dist - b.dist || a.hp - b.hp || a.id.localeCompare(b.id))
+    : visibleEnemies;
   useEffect(() => {
     setReviveTarget((curr) => (reviveTargets.some((e) => e.playerId === curr) ? curr : reviveTargets[0]?.playerId || ""));
   }, [reviveTargets]);
@@ -247,12 +257,20 @@ export default function KewlCardGamePhoneApp() {
     return () => clearTimeout(t);
   }, [g]);
 
+  useEffect(() => {
+    const credits = Number(mineCredits) || 0;
+    if (credits > seenMineCredits.current) setMineOpen(true);
+    seenMineCredits.current = credits;
+  }, [mineCredits]);
+
   const terrainSeed = g?.terrain?.seed ?? 0;
   const occupied = new Set();
   for (const h of heroesPublic) if (h.hp > 0) occupied.add(`${h.x},${h.y}`);
   for (const e of visibleEnemies) occupied.add(`${e.x},${e.y}`);
   const lootByCell = new Map((g?.groundLoot || []).map((l) => [`${l.x},${l.y}`, l]));
   const canMove = allowed.has(ActionType.MOVE) && active && apRemaining > 0;
+  const canDamage = active && allowed.has(ActionType.APPLY_DAMAGE);
+  const damageTarget = damageTargetId ? visibleEnemies.find((e) => e.id === damageTargetId) || null : null;
   const neighbors = active && hero && hero.hp > 0
     ? hexNeighbors(hero.x, hero.y).map((c) => {
         const t = terrainAt(c.x, c.y, terrainSeed);
@@ -264,6 +282,55 @@ export default function KewlCardGamePhoneApp() {
   const H = 60;
   const P = `${W * 0.25},0 ${W * 0.75},0 ${W},${H * 0.5} ${W * 0.75},${H} ${W * 0.25},${H} 0,${H * 0.5}`;
   const topBadge = status === "connected" ? theme.good : status === "error" ? theme.bad : theme.sub;
+  const damageButtons = [1, 2, 3, 4, 5, 6, 8, 10];
+  const mineRadius = 2;
+  const mineGridSize = mineRadius * 2 + 1;
+  const lootMessage = lootFx
+    ? lootFx.mineAction === "credit"
+      ? `Mining cache: +${lootFx.mineCredits || 0} dig${lootFx.mineCredits === 1 ? "" : "s"}`
+      : lootFx.mineAction === "dig"
+        ? `Mining find: +${lootFx.gold || 0}g, ${dropsText(lootFx.drops)}`
+        : `Loot pickup: +${lootFx.xp || 0} XP, +${lootFx.gold || 0}g, ${dropsText(lootFx.drops)}`
+    : "";
+  const mineCells = useMemo(() => {
+    if (!mine) return [];
+    const cells = [];
+    for (let y = mineCursor.y - mineRadius; y <= mineCursor.y + mineRadius; y += 1) {
+      for (let x = mineCursor.x - mineRadius; x <= mineCursor.x + mineRadius; x += 1) {
+        const key = `${x},${y}`;
+        const tile = mineTiles.get(key) || null;
+        const isCursor = x === mineCursor.x && y === mineCursor.y;
+        const isAvailable = mineAvailable.has(key);
+        const canDig = isAvailable && mineCredits > 0;
+        cells.push({ x, y, key, tile, isCursor, isAvailable, canDig });
+      }
+    }
+    return cells;
+  }, [mine, mineCursor.x, mineCursor.y, mineRadius, mineTiles, mineAvailable, mineCredits]);
+
+  function openDamageModal(enemyId) {
+    setDamageTargetId(enemyId);
+    setDamageValue(1);
+  }
+
+  function closeDamageModal() {
+    setDamageTargetId("");
+  }
+
+  function applyDamage(amount) {
+    if (!damageTarget) return;
+    if (!canDamage) {
+      setError("Not your turn.");
+      return;
+    }
+    const dmg = Math.floor(Number(amount));
+    if (!Number.isFinite(dmg) || dmg <= 0) {
+      setError("Enter a damage amount greater than 0.");
+      return;
+    }
+    sendAction(ActionType.APPLY_DAMAGE, { targetEnemyId: damageTarget.id, amount: dmg });
+    closeDamageModal();
+  }
 
   return (
     <div style={shell}>
@@ -300,9 +367,22 @@ export default function KewlCardGamePhoneApp() {
                   <div style={{ fontWeight: 800 }}>{player?.playerName || "Player"}</div>
                   <div style={{ marginTop: 3, fontSize: 12, color: theme.sub }}>HP {hero ? `${hero.hp}/${hero.maxHp}` : "-"} | AP {apRemaining}/{apMax} | Lv {rpg?.level || "-"}</div>
                 </div>
-                <button disabled={!active || !allowed.has(ActionType.END_TURN)} onClick={() => sendAction(ActionType.END_TURN)} style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: !active ? "#314255" : "#d18d2f", color: !active ? "#9fb1c5" : "#2a1908" }}>
-                  End Turn
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    disabled={!active || !allowed.has(ActionType.UNDO)}
+                    onClick={() => sendAction(ActionType.UNDO)}
+                    style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: !active ? "#2b3847" : "#3b63a5", color: !active ? "#9fb1c5" : "#e6f0ff" }}
+                  >
+                    Undo
+                  </button>
+                  <button
+                    disabled={!active || !allowed.has(ActionType.END_TURN)}
+                    onClick={() => sendAction(ActionType.END_TURN)}
+                    style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: !active ? "#314255" : "#d18d2f", color: !active ? "#9fb1c5" : "#2a1908" }}
+                  >
+                    End Turn
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -312,7 +392,7 @@ export default function KewlCardGamePhoneApp() {
             {tab === "actions" ? (
               <>
                 <div style={card}>
-                  <div style={{ color: theme.sub, fontSize: 12, marginBottom: 6 }}>Move on green. Red hex attacks adjacent enemy.</div>
+                  <div style={{ color: theme.sub, fontSize: 12, marginBottom: 6 }}>Move on green. Red hexes mark enemies.</div>
                   <div style={{ position: "relative", width: 264, height: 220, margin: "0 auto" }}>
                     <div style={{ position: "absolute", left: 96, top: 80, width: W, height: H, display: "grid", placeItems: "center", fontWeight: 800 }}>YOU</div>
                     {neighbors.map((c) => {
@@ -321,12 +401,11 @@ export default function KewlCardGamePhoneApp() {
                       const left = 96 + (c.x - hero.x) * xStep;
                       const top = 80 + (c.y - hero.y) * yStep + ((c.x % 2 ? yStep / 2 : 0) - (hero.x % 2 ? yStep / 2 : 0));
                       const enemy = visibleEnemies.find((e) => e.x === c.x && e.y === c.y) || null;
-                      const canAttack = Boolean(enemy && active && allowed.has(ActionType.ATTACK));
-                      const tap = c.canMove || canAttack;
+                      const tap = c.canMove;
                       const bg = enemy ? "#472731" : c.canMove ? "#1b3b2a" : c.t.passable ? c.t.fill : "#1d2734";
                       const stroke = enemy ? "#c57784" : c.canMove ? "#5cb882" : c.t.stroke;
                       return (
-                        <button key={`${c.x},${c.y}`} disabled={!tap} onClick={() => (canAttack ? sendAction(ActionType.ATTACK, { targetEnemyId: enemy.id }) : sendMove(c.x, c.y))} style={{ position: "absolute", left, top, width: W, height: H, border: "none", background: "transparent", padding: 0, cursor: tap ? "pointer" : "default", color: enemy ? theme.bad : c.canMove ? theme.good : theme.sub, fontWeight: 800, fontSize: 11 }}>
+                        <button key={`${c.x},${c.y}`} disabled={!tap} onClick={() => sendMove(c.x, c.y)} style={{ position: "absolute", left, top, width: W, height: H, border: "none", background: "transparent", padding: 0, cursor: tap ? "pointer" : "default", color: enemy ? theme.bad : c.canMove ? theme.good : theme.sub, fontWeight: 800, fontSize: 11 }}>
                           <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}><polygon points={P} fill={bg} stroke={stroke} strokeWidth="1.2" /></svg>
                           <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
                             <div>{enemy ? "EN" : c.canMove ? "GO" : ""}</div>
@@ -340,10 +419,10 @@ export default function KewlCardGamePhoneApp() {
                 </div>
 
                 <div style={card}>
-                  <div style={{ marginBottom: 8, fontWeight: 700 }}>Targets (only monsters within 8 hexes shown)</div>
-                  <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-                    {visibleEnemies.length ? visibleEnemies.map((e) => (
-                      <div key={e.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 7, background: theme.panel }}>
+                  <div style={{ marginBottom: 8, fontWeight: 700 }}>Targets (tap to deal damage)</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {targetEnemies.length ? targetEnemies.map((e) => (
+                      <button key={e.id} onClick={() => openDamageModal(e.id)} style={{ textAlign: "left", border: `1px solid ${theme.border}`, borderRadius: 8, padding: 7, background: theme.panel, color: theme.text, cursor: "pointer" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                           <strong>{e.name} {e.level ? `(Lv ${e.level})` : ""}</strong>
                           <span style={mono}>{e.hp}/{e.maxHp}</span>
@@ -351,28 +430,10 @@ export default function KewlCardGamePhoneApp() {
                         <div style={{ marginTop: 4, height: 6, borderRadius: 99, overflow: "hidden", border: `1px solid ${theme.border}`, background: "#0e141c" }}>
                           <div style={{ width: pct(e.hp, e.maxHp), height: "100%", background: "linear-gradient(90deg,#ff9a9a,#ff5757)" }} />
                         </div>
-                        <div style={{ marginTop: 3, fontSize: 11, color: theme.sub }}>Distance {hero ? manhattan(hero, e) : "?"}</div>
-                      </div>
-                    )) : <div style={{ color: theme.sub }}>No monsters in range.</div>}
+                        <div style={{ marginTop: 3, fontSize: 11, color: theme.sub }}>Distance {hero ? e.dist : "?"}</div>
+                      </button>
+                    )) : <div style={{ color: theme.sub }}>No monsters on the board.</div>}
                   </div>
-
-                  <div style={{ fontSize: 12, color: theme.sub }}>Weapon target (range {attackRange})</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
-                    {attackable.map((e) => <button key={e.id} onClick={() => setAttackTarget(e.id)} style={{ padding: "5px 8px", borderRadius: 8, border: `1px solid ${attackTarget === e.id ? "#cc7784" : theme.border}`, background: attackTarget === e.id ? "#5a2e38" : theme.panel, color: attackTarget === e.id ? "#ffe0e6" : theme.sub }}>{e.name}</button>)}
-                    {!attackable.length ? <span style={{ color: theme.sub, fontSize: 12 }}>No melee targets.</span> : null}
-                  </div>
-                  <button disabled={!active || !allowed.has(ActionType.ATTACK) || !attackTarget} onClick={() => sendAction(ActionType.ATTACK, { targetEnemyId: attackTarget })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#a03d4f", color: "#ffeef1" }}>
-                    Attack
-                  </button>
-
-                  <div style={{ fontSize: 12, color: theme.sub, marginTop: 8 }}>Spell target (range {spellRange})</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
-                    {spellable.map((e) => <button key={e.id} onClick={() => setSpellTarget(e.id)} style={{ padding: "5px 8px", borderRadius: 8, border: `1px solid ${spellTarget === e.id ? "#6fa5e5" : theme.border}`, background: spellTarget === e.id ? "#2a4d7f" : theme.panel, color: spellTarget === e.id ? "#e2efff" : theme.sub }}>{e.name}</button>)}
-                    {!spellable.length ? <span style={{ color: theme.sub, fontSize: 12 }}>No spell targets.</span> : null}
-                  </div>
-                  <button disabled={!active || !allowed.has(ActionType.CAST_SPELL) || !spellTarget} onClick={() => sendAction(ActionType.CAST_SPELL, { targetEnemyId: spellTarget })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#3a6fb7", color: "#edf5ff" }}>
-                    Cast {spellName}
-                  </button>
 
                   <div style={{ fontSize: 12, color: theme.sub, marginTop: 8 }}>Revive</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 5 }}>
@@ -383,39 +444,42 @@ export default function KewlCardGamePhoneApp() {
                     Revive Target
                   </button>
                 </div>
+
+                {mine ? (
+                  <div style={card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontWeight: 800 }}>Mining Grid</div>
+                      <div style={{ fontSize: 12, color: theme.sub }}>Credits {mineCredits}</div>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 12, color: theme.sub }}>Pick a direction each dig to push deeper into the mine.</div>
+                    {mineLastReward ? (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#f4d9a8" }}>
+                        Last dig: +{mineLastReward.gold || 0}g, {dropsText(mineLastReward.drops)} (depth {mineLastReward.depth || 0})
+                      </div>
+                    ) : null}
+                    <button
+                      disabled={mineCredits <= 0}
+                      onClick={() => setMineOpen(true)}
+                      style={{ width: "100%", marginTop: 8, border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: mineCredits > 0 ? "#4b7c97" : "#2a3442", color: mineCredits > 0 ? "#e7f7ff" : "#9fb1c5" }}
+                    >
+                      {mineCredits > 0 ? "Open Mine" : "No Digs Available"}
+                    </button>
+                  </div>
+                ) : null}
               </>
             ) : null}
 
             {tab === "inventory" ? (
               <div style={card}>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, fontSize: 12 }}>
-                  <span>Herb <strong>{inventory.herb || 0}</strong></span>
-                  <span>Fang <strong>{inventory.fang || 0}</strong></span>
-                  <span>Essence <strong>{inventory.essence || 0}</strong></span>
-                  <span>Potion <strong>{inventory.potion || 0}</strong></span>
+                  {resourceOrder.map((key) => (
+                    <span key={key}>{labels[key] || key} <strong>{inventory[key] || 0}</strong></span>
+                  ))}
                 </div>
                 <button disabled={!active || !allowed.has(ActionType.USE_ITEM)} onClick={() => sendAction(ActionType.USE_ITEM, { itemId: "potion" })} style={{ width: "100%", border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#9d5a2b", color: "#fff0e6" }}>
                   Drink Potion
                 </button>
-                {lootFx ? <div style={{ marginTop: 8, border: `1px solid #66502a`, borderRadius: 8, padding: 8, color: "#f8e4b4" }}>Loot pickup: +{lootFx.xp} XP, +{lootFx.gold}g, {dropsText(lootFx.drops)}</div> : null}
-              </div>
-            ) : null}
-
-            {tab === "crafting" ? (
-              <div style={card}>
-                {craftingOptions.length ? craftingOptions.map((r) => (
-                  <div key={r.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: 8, background: theme.panel, marginBottom: 7 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <strong>{r.label}</strong><span style={{ ...mono, fontSize: 12, color: theme.sub }}>AP {r.apCost}</span>
-                    </div>
-                    <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Cost: {recipeText(r.requires)}</div>
-                    <div style={{ marginTop: 2, fontSize: 12, color: theme.sub }}>Result: {recipeText(r.yields)}</div>
-                    <button disabled={!active || !allowed.has(ActionType.CRAFT_ITEM) || !r.canCraft} onClick={() => sendAction(ActionType.CRAFT_ITEM, { recipeId: r.id })} style={{ width: "100%", marginTop: 6, border: "none", borderRadius: 8, padding: 8, fontWeight: 800, background: "#2f7a61", color: "#e9fff6" }}>
-                      Craft
-                    </button>
-                  </div>
-                )) : <div style={{ color: theme.sub }}>No recipes unlocked yet.</div>}
-                <div style={{ marginTop: 6, fontSize: 12, color: theme.sub }}>More recipes will be added here.</div>
+                {lootMessage ? <div style={{ marginTop: 8, border: `1px solid #66502a`, borderRadius: 8, padding: 8, color: "#f8e4b4" }}>{lootMessage}</div> : null}
               </div>
             ) : null}
 
@@ -443,6 +507,86 @@ export default function KewlCardGamePhoneApp() {
             ) : null}
           </>
         )}
+
+        {damageTarget ? (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(6, 10, 16, 0.65)", display: "grid", placeItems: "center", zIndex: 30 }} onClick={closeDamageModal}>
+            <div style={{ ...card, margin: 0, width: "min(420px, 92vw)" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 6 }}>{damageTarget.name || "Enemy"} ({damageTarget.hp}/{damageTarget.maxHp})</div>
+              <div style={{ color: theme.sub, fontSize: 12, marginBottom: 10 }}>Select damage to apply.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 10 }}>
+                {damageButtons.map((amt) => (
+                  <button key={amt} disabled={!canDamage} onClick={() => applyDamage(amt)} style={{ border: "none", borderRadius: 8, padding: "8px 0", fontWeight: 800, background: canDamage ? "#7b3646" : "#2a3442", color: canDamage ? "#ffeef1" : "#9fb1c5" }}>
+                    {amt}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="number" min="1" value={damageValue} onChange={(e) => setDamageValue(e.target.value)} style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.panel, color: theme.text }} />
+                <button disabled={!canDamage} onClick={() => applyDamage(damageValue)} style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: canDamage ? "#3b63a5" : "#2a3442", color: canDamage ? "#e6f0ff" : "#9fb1c5" }}>
+                  Apply
+                </button>
+                <button onClick={closeDamageModal} style={{ border: "none", borderRadius: 8, padding: "8px 10px", fontWeight: 800, background: "#2a3442", color: "#c7d2e3" }}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {mineOpen && mine ? (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(6, 10, 16, 0.7)", display: "grid", placeItems: "center", zIndex: 28 }} onClick={() => setMineOpen(false)}>
+            <div style={{ ...card, margin: 0, width: "min(520px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>Mining Depth {Math.abs(mineCursor.x) + Math.abs(mineCursor.y)}</div>
+                <button onClick={() => setMineOpen(false)} style={{ border: "none", borderRadius: 8, padding: "6px 10px", background: "#2a3442", color: "#c7d2e3", fontWeight: 700 }}>Close</button>
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Credits {mineCredits}. Tap a highlighted tile to dig.</div>
+
+              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: `repeat(${mineGridSize}, 1fr)`, gap: 6 }}>
+                {mineCells.map((cell) => {
+                  const tier = cell.tile?.reward?.tier || null;
+                  const rewardKeys = Object.keys(cell.tile?.reward?.drops || {});
+                  const rewardLabel = rewardKeys.length ? (labels[rewardKeys[0]] || rewardKeys[0]) : "";
+                  const rewardShort = rewardLabel ? rewardLabel.slice(0, 1).toUpperCase() : cell.tile?.reward ? "G" : "";
+                  const baseBg = cell.tile ? "#1c2737" : "#0f151d";
+                  const tierBg = tier === "late" ? "#7a4f1c" : tier === "mid" ? "#355c8b" : "#2f5c3a";
+                  const bg = cell.tile ? (cell.tile.reward ? tierBg : baseBg) : "#0f151d";
+                  const border = cell.isCursor ? "#f2c979" : cell.isAvailable ? "#7dc4da" : theme.border;
+                  const label = cell.isCursor ? "YOU" : cell.tile ? (cell.tile.reward ? rewardShort : "BASE") : cell.isAvailable ? "DIG" : "";
+                  return (
+                    <button
+                      key={cell.key}
+                      disabled={!cell.canDig}
+                      onClick={() => cell.canDig && sendMineDig(cell.x, cell.y)}
+                      style={{
+                        position: "relative",
+                        border: `1px solid ${border}`,
+                        borderRadius: 8,
+                        background: bg,
+                        color: cell.isAvailable ? "#d6f1ff" : theme.sub,
+                        fontWeight: 800,
+                        fontSize: 11,
+                        padding: "12px 0",
+                        cursor: cell.canDig ? "pointer" : "default",
+                        opacity: cell.isAvailable && !cell.canDig ? 0.6 : 1
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ marginTop: 10, fontSize: 12, color: theme.sub }}>
+                {mineLastReward ? (
+                  <div>Last dig: +{mineLastReward.gold || 0}g, {dropsText(mineLastReward.drops)} (depth {mineLastReward.depth || 0})</div>
+                ) : (
+                  <div>No digs yet. Start at the base tile and push deeper.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {error ? <div style={{ ...card, color: "#f5aaaa", borderColor: "#6b3737", whiteSpace: "pre-wrap" }}>{error}</div> : null}
       </div>

@@ -2,6 +2,8 @@ export const ActionType = Object.freeze({
   MOVE: "MOVE",
   ATTACK: "ATTACK",
   CAST_SPELL: "CAST_SPELL",
+  APPLY_DAMAGE: "APPLY_DAMAGE",
+  MINE_DIG: "MINE_DIG",
   REVIVE: "REVIVE",
   END_TURN: "END_TURN",
   USE_ITEM: "USE_ITEM",

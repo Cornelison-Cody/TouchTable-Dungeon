@@ -19,7 +19,12 @@ export function makeDefaultRpgProfile() {
       herb: 0,
       fang: 0,
       essence: 0,
-      potion: 0
+      potion: 0,
+      coal: 0,
+      copper: 0,
+      iron: 0,
+      crystal: 0,
+      relic: 0
     }
   };
 }

@@ -99,8 +99,21 @@ const ITEM_LABELS = Object.freeze({
   herb: "Herb",
   fang: "Fang",
   essence: "Essence",
-  potion: "Potion"
+  potion: "Potion",
+  coal: "Coal",
+  copper: "Copper",
+  iron: "Iron",
+  crystal: "Crystal",
+  relic: "Relic"
 });
+
+const MINE_RESOURCES = Object.freeze([
+  Object.freeze({ id: "coal", min: 1, max: 3, weight: 34, tier: "early" }),
+  Object.freeze({ id: "copper", min: 1, max: 2, weight: 26, tier: "early" }),
+  Object.freeze({ id: "iron", min: 1, max: 2, weight: 20, tier: "mid" }),
+  Object.freeze({ id: "crystal", min: 1, max: 1, weight: 12, tier: "mid" }),
+  Object.freeze({ id: "relic", min: 1, max: 1, weight: 8, tier: "late" })
+]);
 
 const ENEMY_TEMPLATES = Object.freeze({
   common: Object.freeze({
@@ -175,6 +188,137 @@ function heroMaxHpForLevel(level) {
 
 function clone(obj) {
   return JSON.parse(JSON.stringify(obj));
+}
+
+function mineKey(x, y) {
+  return `${x},${y}`;
+}
+
+function mineDepth(x, y) {
+  return Math.abs(x) + Math.abs(y);
+}
+
+function mineNeighbors(x, y) {
+  return [
+    { x: x + 1, y },
+    { x: x - 1, y },
+    { x, y: y + 1 },
+    { x, y: y - 1 }
+  ];
+}
+
+function sanitizeMineReward(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const gold = Math.max(0, Number(raw.gold) || 0);
+  const drops = {};
+  for (const [itemId, qty] of Object.entries(raw.drops && typeof raw.drops === "object" ? raw.drops : {})) {
+    const amt = Math.max(0, Number(qty) || 0);
+    if (amt > 0) drops[itemId] = amt;
+  }
+  const tier = typeof raw.tier === "string" ? raw.tier : null;
+  return { gold, drops, tier };
+}
+
+function ensureMineProfile(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  if (!profile.mine || typeof profile.mine !== "object") profile.mine = {};
+
+  const mine = profile.mine;
+  mine.seed = Number.isFinite(mine.seed) ? Math.floor(mine.seed) : Math.floor(Math.random() * 0x7fffffff);
+  mine.credits = Math.max(0, Number(mine.credits) || 0);
+  mine.totalDigs = Math.max(0, Number(mine.totalDigs) || 0);
+
+  const cursor = mine.cursor && typeof mine.cursor === "object" ? mine.cursor : {};
+  const cx = Number.isFinite(Number(cursor.x)) ? Math.floor(Number(cursor.x)) : 0;
+  const cy = Number.isFinite(Number(cursor.y)) ? Math.floor(Number(cursor.y)) : 0;
+  mine.cursor = { x: cx, y: cy };
+
+  const tilesRaw = mine.tiles && typeof mine.tiles === "object" ? mine.tiles : {};
+  const entries = Array.isArray(tilesRaw) ? tilesRaw : Object.values(tilesRaw);
+  const tiles = {};
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const tx = Number.isFinite(Number(entry.x)) ? Math.floor(Number(entry.x)) : null;
+    const ty = Number.isFinite(Number(entry.y)) ? Math.floor(Number(entry.y)) : null;
+    if (tx === null || ty === null) continue;
+    const key = mineKey(tx, ty);
+    tiles[key] = {
+      x: tx,
+      y: ty,
+      depth: Math.max(0, Number(entry.depth) || mineDepth(tx, ty)),
+      reward: sanitizeMineReward(entry.reward),
+      at: Number(entry.at) || Date.now()
+    };
+  }
+  const originKey = mineKey(0, 0);
+  if (!tiles[originKey]) {
+    tiles[originKey] = { x: 0, y: 0, depth: 0, reward: null, at: Date.now() };
+  }
+  mine.tiles = tiles;
+
+  const cursorKey = mineKey(mine.cursor.x, mine.cursor.y);
+  if (!mine.tiles[cursorKey]) {
+    mine.cursor = { x: 0, y: 0 };
+  }
+
+  const lastReward = sanitizeMineReward(mine.lastReward);
+  mine.lastReward = lastReward
+    ? {
+        gold: lastReward.gold,
+        drops: lastReward.drops,
+        tier: lastReward.tier,
+        depth: Math.max(0, Number(mine.lastReward.depth) || 0),
+        x: Number.isFinite(Number(mine.lastReward.x)) ? Math.floor(Number(mine.lastReward.x)) : 0,
+        y: Number.isFinite(Number(mine.lastReward.y)) ? Math.floor(Number(mine.lastReward.y)) : 0,
+        at: Number(mine.lastReward.at) || Date.now()
+      }
+    : null;
+
+  return mine;
+}
+
+function mineAvailableNeighbors(mine) {
+  if (!mine) return [];
+  const cur = mine.cursor || { x: 0, y: 0 };
+  const taken = mine.tiles || {};
+  return mineNeighbors(cur.x, cur.y).filter((p) => !taken[mineKey(p.x, p.y)]);
+}
+
+function weightedPick(entries, weights) {
+  const total = weights.reduce((sum, w) => sum + Math.max(0, w), 0);
+  if (total <= 0) return entries[0];
+  let roll = Math.random() * total;
+  for (let i = 0; i < entries.length; i += 1) {
+    const w = Math.max(0, weights[i] || 0);
+    if (roll <= w) return entries[i];
+    roll -= w;
+  }
+  return entries[entries.length - 1];
+}
+
+function rollMineReward(depth = 0) {
+  const depthFactor = clamp(depth / 8, 0, 1.6);
+  const weights = MINE_RESOURCES.map((entry) => {
+    if (entry.tier === "early") return entry.weight * Math.max(0.2, 1 - depthFactor * 0.85);
+    if (entry.tier === "mid") return entry.weight * (0.6 + depthFactor * 0.7);
+    return entry.weight * (0.2 + depthFactor * 1.1);
+  });
+
+  const picks = 1 + (Math.random() < (0.12 + depthFactor * 0.15) ? 1 : 0);
+  const drops = {};
+  let tier = "early";
+  for (let i = 0; i < picks; i += 1) {
+    const resource = weightedPick(MINE_RESOURCES, weights);
+    const min = Math.max(1, Math.floor(resource.min));
+    const max = Math.max(min, Math.floor(resource.max));
+    const qty = min + Math.floor(Math.random() * (max - min + 1));
+    drops[resource.id] = (drops[resource.id] || 0) + qty;
+    if (resource.tier === "late") tier = "late";
+    else if (resource.tier === "mid" && tier === "early") tier = "mid";
+  }
+
+  const gold = Math.max(1, 2 + Math.floor(Math.random() * 5) + Math.floor(depth * 0.7));
+  return { gold, drops, tier };
 }
 
 function ensureRpgProfile(player) {
@@ -261,6 +405,10 @@ export function setupWebSocket(server) {
   let gameHistory = null;
 
   const clients = new Map(); // ws -> { clientId, role, playerId?, seat? }
+
+  function isKewlGame() {
+    return session?.gameId === "kewl-card-game";
+  }
 
   function bindContext(ctx) {
     session = ctx.session;
@@ -383,6 +531,7 @@ export function setupWebSocket(server) {
         y: Math.floor(Number(loot.y)),
         xp: Math.max(0, Number(loot.xp) || 0),
         gold: Math.max(0, Number(loot.gold) || 0),
+        mineCredits: Math.max(0, Number(loot.mineCredits) || 0),
         drops: Object.fromEntries(
           Object.entries(loot.drops && typeof loot.drops === "object" ? loot.drops : {})
             .map(([itemId, qty]) => [itemId, Math.max(0, Number(qty) || 0)])
@@ -573,6 +722,7 @@ export function setupWebSocket(server) {
               y: loot.y,
               xp: loot.xp,
               gold: loot.gold,
+              mineCredits: loot.mineCredits || 0,
               drops: loot.drops
             })),
             enemy: primaryEnemy
@@ -621,6 +771,8 @@ export function setupWebSocket(server) {
     const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
     const campaignPlayer = campaignPlayerById(playerId);
     const rpg = ensureRpgProfile(campaignPlayer);
+    const mine = isKewlGame() ? ensureMineProfile(rpg) : null;
+    const mineAvailable = mine ? mineAvailableNeighbors(mine) : [];
     const weapon = WEAPONS[rpg.weaponId] || WEAPONS.rusty_blade;
     const spell = SPELLS[rpg.spellId] || SPELLS.arc_bolt;
     const primaryEnemy = game ? firstLivingEnemy(game) : null;
@@ -673,6 +825,16 @@ export function setupWebSocket(server) {
               },
               inventory: { ...rpg.inventory }
             },
+            mine: mine
+              ? {
+                  credits: mine.credits,
+                  cursor: { ...mine.cursor },
+                  tiles: Object.values(mine.tiles || {}),
+                  available: mineAvailable,
+                  lastReward: mine.lastReward,
+                  totalDigs: mine.totalDigs
+                }
+              : null,
             craftingOptions: Object.values(CRAFTING_RECIPES).map((recipe) => {
               const canCraftByItems = Object.entries(recipe.requires).every(([itemId, qty]) => (rpg.inventory[itemId] || 0) >= qty);
               const canCraft = canCraftByItems && (game.turn.apRemaining ?? 0) >= recipe.apCost;
@@ -717,6 +879,7 @@ export function setupWebSocket(server) {
               y: loot.y,
               xp: loot.xp,
               gold: loot.gold,
+              mineCredits: loot.mineCredits || 0,
               drops: loot.drops
             })),
             enemy: primaryEnemy
@@ -763,6 +926,9 @@ export function setupWebSocket(server) {
                     xp: game.lastLoot.xp,
                     gold: game.lastLoot.gold,
                     drops: game.lastLoot.drops,
+                    mineCredits: game.lastLoot.mineCredits || 0,
+                    mineAction: game.lastLoot.mineAction || null,
+                    mineDepth: Number.isFinite(Number(game.lastLoot.mineDepth)) ? Number(game.lastLoot.mineDepth) : null,
                     at: game.lastLoot.at
                   }
                 : null,
@@ -773,7 +939,7 @@ export function setupWebSocket(server) {
                 const actions = [ActionType.END_TURN];
                 const apRemaining = game.turn.apRemaining ?? 0;
                 if (apRemaining > 0) {
-                  actions.push(ActionType.MOVE, ActionType.ATTACK);
+                  actions.push(ActionType.MOVE, ActionType.ATTACK, ActionType.APPLY_DAMAGE);
                   const recipe = CRAFTING_RECIPES.potion_minor;
                   const canCraftPotion =
                     Object.entries(recipe.requires).every(([itemId, qty]) => (rpg.inventory[itemId] || 0) >= qty) &&
@@ -782,6 +948,8 @@ export function setupWebSocket(server) {
                   if ((rpg.inventory.potion || 0) > 0 && hero.hp < hero.maxHp) actions.push(ActionType.USE_ITEM);
                   if (downedHeroTargetsFor(playerId).length) actions.push(ActionType.REVIVE);
                 }
+                if (mine && mine.credits > 0) actions.push(ActionType.MINE_DIG);
+                if (gameHistory.length) actions.push(ActionType.UNDO);
                 if (apRemaining >= spell.apCost) actions.push(ActionType.CAST_SPELL);
                 return actions;
               })()
@@ -888,6 +1056,37 @@ export function setupWebSocket(server) {
     if (!collected.length) return null;
 
     game.groundLoot = allLoot.filter((loot) => !(loot.x === x && loot.y === y));
+    const now = Date.now();
+    const campaignPlayer = campaignPlayerById(playerId);
+    const profile = ensureRpgProfile(campaignPlayer);
+
+    if (isKewlGame()) {
+      const mine = ensureMineProfile(profile);
+      let credits = 0;
+      for (const loot of collected) {
+        const raw = Number(loot.mineCredits);
+        const gained = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 1;
+        credits += gained;
+      }
+      if (credits > 0) mine.credits += credits;
+      game.lastLoot = {
+        playerId,
+        enemyName: collected.length === 1 ? collected[0].enemyName : "Loot Cache",
+        xp: 0,
+        gold: 0,
+        drops: {},
+        mineCredits: credits,
+        mineAction: "credit",
+        mineDepth: null,
+        at: now
+      };
+      game.log.push({
+        at: now,
+        msg: `${shortName(playerId)} collects a mining cache (${credits} dig${credits === 1 ? "" : "s"}).`
+      });
+      return game.lastLoot;
+    }
+
     const totals = { xp: 0, gold: 0, drops: {} };
     for (const loot of collected) {
       totals.xp += Math.max(0, Number(loot.xp) || 0);
@@ -898,8 +1097,6 @@ export function setupWebSocket(server) {
       }
     }
 
-    const campaignPlayer = campaignPlayerById(playerId);
-    const profile = ensureRpgProfile(campaignPlayer);
     const levelsGained = grantXp(profile, totals.xp);
     profile.gold += totals.gold;
     addInventory(profile, totals.drops);
@@ -915,13 +1112,15 @@ export function setupWebSocket(server) {
       hero.level = profile.level;
     }
 
-    const now = Date.now();
     game.lastLoot = {
       playerId,
       enemyName: collected.length === 1 ? collected[0].enemyName : "Loot Cache",
       xp: totals.xp,
       gold: totals.gold,
       drops: totals.drops,
+      mineCredits: 0,
+      mineAction: null,
+      mineDepth: null,
       at: now
     };
     game.log.push({
@@ -944,11 +1143,57 @@ export function setupWebSocket(server) {
     game.scenario.defeatedCount = (game.scenario.defeatedCount ?? 0) + 1;
     game.lastLoot = null;
 
+    game.enemies = (game.enemies || []).filter((enemy) => enemy.id !== enemyUnit.id);
+    game.groundLoot = game.groundLoot || [];
+
+    if (isKewlGame()) {
+      const xpReward = 1 + Math.floor(Math.random() * 3);
+      if (killerPlayerId) {
+        const profile = rpgProfileById(killerPlayerId);
+        const levelsGained = grantXp(profile, xpReward);
+        const upgradedWeapon = equipAutoUpgrades(profile);
+        const hero = game.heroes?.[killerPlayerId];
+        if (hero) {
+          const nextMaxHp = heroMaxHpForLevel(profile.level);
+          if (nextMaxHp > hero.maxHp) {
+            hero.maxHp = nextMaxHp;
+            hero.hp = clamp(hero.hp + levelsGained * 2, 0, hero.maxHp);
+          }
+          hero.level = profile.level;
+        }
+        game.log.push({ at: now, msg: `${shortName(killerPlayerId)} gains ${xpReward} XP for the kill.` });
+        if (levelsGained > 0) {
+          game.log.push({ at: now, msg: `${shortName(killerPlayerId)} reached level ${profile.level}!` });
+        }
+        if (upgradedWeapon) {
+          game.log.push({ at: now, msg: `${shortName(killerPlayerId)} upgraded weapon to ${upgradedWeapon.name}.` });
+        }
+      }
+
+      const mineCredits = Math.max(1, Math.floor(Number(enemyUnit.level) || 1));
+      game.groundLoot.push({
+        id: `loot-${uuid().slice(0, 8)}`,
+        x: enemyUnit.x,
+        y: enemyUnit.y,
+        xp: 0,
+        gold: 0,
+        mineCredits,
+        drops: {},
+        enemyName: enemyUnit.name || "Monster",
+        killerPlayerId: killerPlayerId || null,
+        at: now
+      });
+
+      game.log.push({
+        at: now,
+        msg: `${enemyUnit.name || "Monster"} defeated (${game.scenario.defeatedCount} total). Mining cache dropped at (${enemyUnit.x},${enemyUnit.y}).`
+      });
+      return;
+    }
+
     const xpReward = Math.max(1, Number(enemyUnit.rewardXp) || Number(enemyUnit.level) * 8 || 8);
     const goldReward = Math.max(0, Number(enemyUnit.rewardGold) || Number(enemyUnit.level) * 3 || 0);
     const drops = rollEnemyDrops(enemyUnit);
-    game.enemies = (game.enemies || []).filter((enemy) => enemy.id !== enemyUnit.id);
-    game.groundLoot = game.groundLoot || [];
     game.groundLoot.push({
       id: `loot-${uuid().slice(0, 8)}`,
       x: enemyUnit.x,
@@ -1144,6 +1389,96 @@ export function setupWebSocket(server) {
     if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, cast: spell.id }, id));
+    emitViews();
+  }
+
+  function handleApplyDamage(ws, id, actorPlayerId, params = {}) {
+    if (!requireActive(ws, id, actorPlayerId)) return;
+    if ((game.turn.apRemaining ?? 0) <= 0) return reject(ws, id, "NO_AP", "No actions remaining. End your turn.");
+    const hero = game.heroes[actorPlayerId];
+    if (!hero || hero.hp <= 0) return reject(ws, id, "HERO_DOWN", "Hero is down.");
+
+    const targetEnemyId = (params?.targetEnemyId ?? "").toString().trim();
+    const amount = Math.floor(Number(params?.amount));
+    if (!targetEnemyId) return reject(ws, id, "BAD_PARAMS", "targetEnemyId required.");
+    if (!Number.isFinite(amount) || amount <= 0) return reject(ws, id, "BAD_PARAMS", "amount must be > 0.");
+
+    const target = livingEnemies(game).find((enemyUnit) => enemyUnit.id === targetEnemyId) || null;
+    if (!target) return reject(ws, id, "NOT_FOUND", "Enemy not found.");
+
+    pushGameHistory();
+    const enemyHpBefore = target.hp;
+    target.hp = clamp(target.hp - amount, 0, target.maxHp);
+    const dealt = enemyHpBefore - target.hp;
+    game.lastHeroDamage = {
+      actorPlayerId,
+      amount: dealt,
+      type: "manual",
+      enemyId: target.id,
+      enemyHp: target.hp,
+      enemyMaxHp: target.maxHp,
+      at: Date.now()
+    };
+    game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} deals ${dealt} damage to ${target.name || "enemy"}.` });
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
+    if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, dealt }, id));
+    emitViews();
+  }
+
+  function handleMineDig(ws, id, actorPlayerId, params = {}) {
+    if (!game) return reject(ws, id, "NO_GAME", "No game started yet.");
+    if (!isKewlGame()) return reject(ws, id, "FORBIDDEN", "Mining is only available in Kewl Card.");
+
+    const campaignPlayer = campaignPlayerById(actorPlayerId);
+    if (!campaignPlayer) return reject(ws, id, "NOT_FOUND", "Player not found.");
+    const profile = ensureRpgProfile(campaignPlayer);
+    const mine = ensureMineProfile(profile);
+    if (!mine || mine.credits <= 0) return reject(ws, id, "NO_CREDITS", "No mining digs available.");
+
+    const toX = Number(params.x ?? params.toX);
+    const toY = Number(params.y ?? params.toY);
+    if (!Number.isFinite(toX) || !Number.isFinite(toY)) return reject(ws, id, "BAD_PARAMS", "x/y required.");
+    const nx = Math.floor(toX);
+    const ny = Math.floor(toY);
+
+    const isNeighbor = mineNeighbors(mine.cursor.x, mine.cursor.y).some((p) => p.x === nx && p.y === ny);
+    if (!isNeighbor) return reject(ws, id, "OUT_OF_RANGE", "Select a tile adjacent to your miner.");
+    const key = mineKey(nx, ny);
+    if (mine.tiles[key]) return reject(ws, id, "TAKEN", "That tile is already mined.");
+
+    const now = Date.now();
+    mine.credits = Math.max(0, mine.credits - 1);
+    mine.cursor = { x: nx, y: ny };
+    mine.totalDigs += 1;
+    const depth = mineDepth(nx, ny);
+    const reward = rollMineReward(depth);
+    const rewardPayload = { gold: reward.gold, drops: reward.drops, tier: reward.tier };
+    mine.tiles[key] = { x: nx, y: ny, depth, reward: rewardPayload, at: now };
+    mine.lastReward = { ...rewardPayload, depth, x: nx, y: ny, at: now };
+
+    profile.gold += reward.gold;
+    addInventory(profile, reward.drops);
+
+    game.lastLoot = {
+      playerId: actorPlayerId,
+      enemyName: "Mining Find",
+      xp: 0,
+      gold: reward.gold,
+      drops: reward.drops,
+      mineCredits: 0,
+      mineAction: "dig",
+      mineDepth: depth,
+      at: now
+    };
+
+    game.log.push({
+      at: now,
+      msg: `${shortName(actorPlayerId)} digs deeper (depth ${depth}) and finds ${reward.gold} gold, ${formatDrops(reward.drops)}.`
+    });
+
+    send(ws, makeMsg(MsgType.OK, { accepted: true, depth, reward: rewardPayload }, id));
     emitViews();
   }
 
@@ -1459,6 +1794,8 @@ export function setupWebSocket(server) {
     if (action === ActionType.MOVE) return handleMove(ws, id, actorPlayerId, params);
     if (action === ActionType.ATTACK) return handleAttack(ws, id, actorPlayerId, params);
     if (action === ActionType.CAST_SPELL) return handleCastSpell(ws, id, actorPlayerId, params);
+    if (action === ActionType.APPLY_DAMAGE) return handleApplyDamage(ws, id, actorPlayerId, params);
+    if (action === ActionType.MINE_DIG) return handleMineDig(ws, id, actorPlayerId, params);
     if (action === ActionType.REVIVE) return handleRevive(ws, id, actorPlayerId, params);
     if (action === ActionType.CRAFT_ITEM) return handleCraftItem(ws, id, actorPlayerId, params);
     if (action === ActionType.USE_ITEM) return handleUseItem(ws, id, actorPlayerId, params);
@@ -1697,8 +2034,8 @@ export function setupWebSocket(server) {
     }
 
     if (msg.t === MsgType.ACTION) {
+      const action = msg.payload?.action;
       if (info.role === Role.TABLE) {
-        const action = msg.payload?.action;
         if (action === ActionType.SPAWN_ENEMY) {
           handleSpawnEnemy(ws, msg.id);
           syncContext(ctx);
@@ -1728,6 +2065,15 @@ export function setupWebSocket(server) {
         if (!info.playerId) {
           syncContext(ctx);
           return reject(ws, msg.id, "NOT_JOINED", "Join a seat first.");
+        }
+        if (action === ActionType.UNDO) {
+          if (!requireActive(ws, msg.id, info.playerId)) {
+            syncContext(ctx);
+            return;
+          }
+          handleUndo(ws, msg.id);
+          syncContext(ctx);
+          return;
         }
         handleAction(ws, msg.id, info.playerId, msg.payload);
         syncContext(ctx);
