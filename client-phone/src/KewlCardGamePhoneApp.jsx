@@ -74,6 +74,55 @@ function dropsText(obj = {}) {
   return parts.length ? parts.join(" | ") : "None";
 }
 
+function lootKind(loot) {
+  if (!loot) return "Loot";
+  if (loot.mineAction === "credit") return "Mining Cache";
+  if (loot.mineAction === "dig") return "Mine Find";
+  return "Loot Pickup";
+}
+
+function lootChipText(loot) {
+  if (!loot) return [];
+  const chips = [];
+  const xp = Math.max(0, Number(loot.xp) || 0);
+  const gold = Math.max(0, Number(loot.gold) || 0);
+  const mineCredits = Math.max(0, Number(loot.mineCredits) || 0);
+  if (xp > 0) chips.push(`+${xp} XP`);
+  if (gold > 0) chips.push(`+${gold}g`);
+  if (mineCredits > 0) chips.push(`+${mineCredits} dig${mineCredits === 1 ? "" : "s"}`);
+  for (const [itemId, qtyRaw] of Object.entries(loot.drops || {})) {
+    const qty = Math.max(0, Number(qtyRaw) || 0);
+    if (qty > 0) chips.push(`+${qty} ${labels[itemId] || itemId}`);
+  }
+  if (!chips.length) chips.push("No resources");
+  return chips;
+}
+
+function lootEventFrom(loot) {
+  if (!loot || !loot.at) return null;
+  return {
+    id: `${loot.at}-${loot.mineAction || "loot"}`,
+    at: Number(loot.at) || Date.now(),
+    kind: lootKind(loot),
+    chips: lootChipText(loot),
+    depth: Number.isFinite(Number(loot.mineDepth)) ? Math.max(0, Number(loot.mineDepth)) : null
+  };
+}
+
+function clockLabel(ts) {
+  if (!ts) return "--:--";
+  const d = new Date(ts);
+  const hh = `${d.getHours()}`.padStart(2, "0");
+  const mm = `${d.getMinutes()}`.padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function tierPalette(tier) {
+  if (tier === "late") return { glow: "#f5a649", tint: "linear-gradient(145deg, #7a3f16, #4a2a16)" };
+  if (tier === "mid") return { glow: "#72b8ff", tint: "linear-gradient(145deg, #214f79, #1a344f)" };
+  return { glow: "#7fce8c", tint: "linear-gradient(145deg, #27573a, #1d3b2a)" };
+}
+
 export default function KewlCardGamePhoneApp() {
   const initialWsUrl = useMemo(() => {
     const fromQuery = getQueryWsUrl();
@@ -104,7 +153,10 @@ export default function KewlCardGamePhoneApp() {
   const [hitFx, setHitFx] = useState(null);
   const [incomingFx, setIncomingFx] = useState(null);
   const [lootFx, setLootFx] = useState(null);
+  const [lootFeed, setLootFeed] = useState([]);
   const [mineOpen, setMineOpen] = useState(false);
+  const [digRevealFx, setDigRevealFx] = useState(null);
+  const [digTapKey, setDigTapKey] = useState("");
 
   const resumeToken = useMemo(() => localStorage.getItem(storageKey("resume_token")) || "", []);
   const sessionId = useMemo(() => getQuerySessionId() || "", []);
@@ -114,6 +166,7 @@ export default function KewlCardGamePhoneApp() {
   const seenIncoming = useRef(0);
   const seenLoot = useRef(0);
   const seenMineCredits = useRef(0);
+  const seenMineReward = useRef(0);
 
   useEffect(() => {
     setError(null);
@@ -201,6 +254,7 @@ export default function KewlCardGamePhoneApp() {
   }
 
   function sendMineDig(x, y) {
+    setDigTapKey(`${x},${y}`);
     sendAction(ActionType.MINE_DIG, { x, y });
   }
 
@@ -252,10 +306,33 @@ export default function KewlCardGamePhoneApp() {
     const loot = g?.lastLoot;
     if (!loot?.at || loot.at <= seenLoot.current) return;
     seenLoot.current = loot.at;
-    setLootFx(loot);
-    const t = setTimeout(() => setLootFx((v) => (v?.at === loot.at ? null : v)), 7800);
+    const event = lootEventFrom(loot);
+    if (!event) return;
+    setLootFx(event);
+    setLootFeed((curr) => [event, ...curr.filter((e) => e.id !== event.id)].slice(0, 7));
+    const t = setTimeout(() => setLootFx((v) => (v?.id === event.id ? null : v)), 7800);
     return () => clearTimeout(t);
   }, [g]);
+  useEffect(() => {
+    if (!digTapKey) return;
+    const t = setTimeout(() => setDigTapKey(""), 260);
+    return () => clearTimeout(t);
+  }, [digTapKey]);
+  useEffect(() => {
+    const reward = mineLastReward;
+    if (!reward?.at || reward.at <= seenMineReward.current) return;
+    seenMineReward.current = reward.at;
+    setDigRevealFx({
+      at: reward.at,
+      key: `${reward.x},${reward.y}`,
+      tier: reward.tier || "early",
+      gold: Math.max(0, Number(reward.gold) || 0),
+      drops: reward.drops || {},
+      depth: Math.max(0, Number(reward.depth) || 0)
+    });
+    const t = setTimeout(() => setDigRevealFx((v) => (v?.at === reward.at ? null : v)), 2500);
+    return () => clearTimeout(t);
+  }, [mineLastReward]);
 
   useEffect(() => {
     const credits = Number(mineCredits) || 0;
@@ -287,13 +364,12 @@ export default function KewlCardGamePhoneApp() {
   const damageButtons = [1, 2, 3, 4, 5, 6, 8, 10];
   const mineRadius = 2;
   const mineGridSize = mineRadius * 2 + 1;
-  const lootMessage = lootFx
-    ? lootFx.mineAction === "credit"
-      ? `Mining cache: +${lootFx.mineCredits || 0} dig${lootFx.mineCredits === 1 ? "" : "s"}`
-      : lootFx.mineAction === "dig"
-        ? `Mining find: +${lootFx.gold || 0}g, ${dropsText(lootFx.drops)}`
-        : `Loot pickup: +${lootFx.xp || 0} XP, +${lootFx.gold || 0}g, ${dropsText(lootFx.drops)}`
-    : "";
+  const latestLoot = lootFx || lootFeed[0] || null;
+  const latestLootChips = latestLoot?.chips || [];
+  const mineDepthNow = Math.abs(mineCursor.x) + Math.abs(mineCursor.y);
+  const mineDepthPct = Math.max(5, Math.min(100, (mineDepthNow / 24) * 100));
+  const digRevealChips = digRevealFx ? lootChipText({ gold: digRevealFx.gold, drops: digRevealFx.drops }) : [];
+  const digRevealPalette = tierPalette(digRevealFx?.tier || "early");
   const mineCells = useMemo(() => {
     if (!mine) return [];
     const cells = [];
@@ -390,6 +466,34 @@ export default function KewlCardGamePhoneApp() {
 
             {hitFx ? <div style={{ ...card, borderColor: "#6b3a3a", color: "#ffd6d6" }}>Hit for {hitFx.amount}. Enemy {hitFx.enemyHp}/{hitFx.enemyMaxHp}</div> : null}
             {incomingFx ? <div style={{ ...card, borderColor: "#6b3a3a", color: "#ffd6d6" }}>You were hit for {incomingFx.amount}. HP {incomingFx.heroHp}/{incomingFx.heroMaxHp}</div> : null}
+            {latestLoot ? (
+              <div style={{ ...card, borderColor: "#6f5531", background: "linear-gradient(160deg, rgba(58,42,24,0.74), rgba(20,32,49,0.9))" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontWeight: 800 }}>Loot Feed</div>
+                  <span style={{ ...mono, fontSize: 11, color: "#ffd99f" }}>{clockLabel(latestLoot.at)}</span>
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#f4d8a6" }}>
+                  {latestLoot.kind}{latestLoot.depth !== null ? ` • Depth ${latestLoot.depth}` : ""}
+                </div>
+                <div style={{ marginTop: 7, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {latestLootChips.map((chip) => (
+                    <span key={chip} style={{ border: "1px solid #876636", borderRadius: 999, padding: "3px 8px", fontSize: 11, color: "#ffe6bf", background: "rgba(31, 19, 10, 0.55)" }}>
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+                {lootFeed.length > 1 ? (
+                  <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                    {lootFeed.slice(1, 5).map((entry) => (
+                      <div key={entry.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#dcbf8d" }}>
+                        <span style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{entry.kind}: {entry.chips.slice(0, 2).join(", ")}</span>
+                        <span style={{ ...mono, color: "#bca176" }}>{clockLabel(entry.at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {tab === "actions" ? (
               <>
@@ -453,9 +557,13 @@ export default function KewlCardGamePhoneApp() {
                   <div style={card}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontWeight: 800 }}>Mining Grid</div>
-                      <div style={{ fontSize: 12, color: theme.sub }}>Credits {mineCredits}</div>
+                      <div style={{ fontSize: 12, color: theme.sub }}>Credits {mineCredits} • Digs {mine.totalDigs || 0}</div>
                     </div>
                     <div style={{ marginTop: 6, fontSize: 12, color: theme.sub }}>Pick a direction each dig to push deeper into the mine.</div>
+                    <div style={{ marginTop: 8, borderRadius: 999, border: `1px solid ${theme.border}`, height: 9, overflow: "hidden", background: "#0d141c" }}>
+                      <div style={{ width: `${mineDepthPct}%`, height: "100%", background: "linear-gradient(90deg, #2e6e9b, #50a9db)" }} />
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 11, color: "#95c7e6" }}>Current depth {mineDepthNow}</div>
                     {mineLastReward ? (
                       <div style={{ marginTop: 6, fontSize: 12, color: "#f4d9a8" }}>
                         Last dig: +{mineLastReward.gold || 0}g, {dropsText(mineLastReward.drops)} (depth {mineLastReward.depth || 0})
@@ -483,7 +591,6 @@ export default function KewlCardGamePhoneApp() {
                 <button disabled={!active || !allowed.has(ActionType.USE_ITEM)} onClick={() => sendAction(ActionType.USE_ITEM, { itemId: "potion" })} style={{ width: "100%", border: "none", borderRadius: 8, padding: 9, fontWeight: 800, background: "#9d5a2b", color: "#fff0e6" }}>
                   Drink Potion
                 </button>
-                {lootMessage ? <div style={{ marginTop: 8, border: `1px solid #66502a`, borderRadius: 8, padding: 8, color: "#f8e4b4" }}>{lootMessage}</div> : null}
               </div>
             ) : null}
 
@@ -541,10 +648,29 @@ export default function KewlCardGamePhoneApp() {
           <div style={{ position: "fixed", inset: 0, background: "rgba(6, 10, 16, 0.7)", display: "grid", placeItems: "center", zIndex: 28 }} onClick={() => setMineOpen(false)}>
             <div style={{ ...card, margin: 0, width: "min(520px, 94vw)" }} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>Mining Depth {Math.abs(mineCursor.x) + Math.abs(mineCursor.y)}</div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>Mining Depth {mineDepthNow}</div>
                 <button onClick={() => setMineOpen(false)} style={{ border: "none", borderRadius: 8, padding: "6px 10px", background: "#2a3442", color: "#c7d2e3", fontWeight: 700 }}>Close</button>
               </div>
               <div style={{ marginTop: 4, fontSize: 12, color: theme.sub }}>Credits {mineCredits}. Tap a highlighted tile to dig.</div>
+              <div style={{ marginTop: 8, borderRadius: 999, border: `1px solid ${theme.border}`, height: 9, overflow: "hidden", background: "#0d141c" }}>
+                <div style={{ width: `${mineDepthPct}%`, height: "100%", background: "linear-gradient(90deg, #2e6e9b, #50a9db)" }} />
+              </div>
+
+              {digRevealFx ? (
+                <div style={{ marginTop: 10, border: `1px solid ${digRevealPalette.glow}`, borderRadius: 10, padding: "8px 10px", background: digRevealPalette.tint, boxShadow: `0 0 0 1px rgba(0,0,0,0.25), 0 0 16px ${digRevealPalette.glow}55` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <strong style={{ fontSize: 12 }}>Strike Complete</strong>
+                    <span style={{ ...mono, fontSize: 11 }}>Depth {digRevealFx.depth}</span>
+                  </div>
+                  <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {digRevealChips.map((chip) => (
+                      <span key={chip} style={{ border: "1px solid rgba(255,255,255,0.24)", borderRadius: 999, padding: "3px 8px", fontSize: 11, background: "rgba(8,12,18,0.4)" }}>
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: `repeat(${mineGridSize}, 1fr)`, gap: 6 }}>
                 {mineCells.map((cell) => {
@@ -552,11 +678,14 @@ export default function KewlCardGamePhoneApp() {
                   const rewardKeys = Object.keys(cell.tile?.reward?.drops || {});
                   const rewardLabel = rewardKeys.length ? (labels[rewardKeys[0]] || rewardKeys[0]) : "";
                   const rewardShort = rewardLabel ? rewardLabel.slice(0, 1).toUpperCase() : cell.tile?.reward ? "G" : "";
+                  const palette = tierPalette(tier || "early");
                   const baseBg = cell.tile ? "#1c2737" : "#0f151d";
-                  const tierBg = tier === "late" ? "#7a4f1c" : tier === "mid" ? "#355c8b" : "#2f5c3a";
-                  const bg = cell.tile ? (cell.tile.reward ? tierBg : baseBg) : "#0f151d";
+                  const bg = cell.tile ? (cell.tile.reward ? palette.tint : baseBg) : (cell.isAvailable ? "linear-gradient(145deg, #13324a, #102536)" : "#0f151d");
                   const border = cell.isCursor ? "#f2c979" : cell.isAvailable ? "#7dc4da" : theme.border;
                   const label = cell.isCursor ? "YOU" : cell.tile ? (cell.tile.reward ? rewardShort : "BASE") : cell.isAvailable ? "DIG" : "";
+                  const depthLabel = Math.abs(cell.x) + Math.abs(cell.y);
+                  const isPulse = digTapKey && digTapKey === cell.key;
+                  const isReveal = digRevealFx && digRevealFx.key === cell.key;
                   return (
                     <button
                       key={cell.key}
@@ -570,12 +699,15 @@ export default function KewlCardGamePhoneApp() {
                         color: cell.isAvailable ? "#d6f1ff" : theme.sub,
                         fontWeight: 800,
                         fontSize: 11,
-                        padding: "12px 0",
+                        padding: "10px 0 9px",
                         cursor: cell.canDig ? "pointer" : "default",
-                        opacity: cell.isAvailable && !cell.canDig ? 0.6 : 1
+                        opacity: cell.isAvailable && !cell.canDig ? 0.6 : 1,
+                        transform: isPulse ? "scale(0.94)" : "scale(1)",
+                        boxShadow: isReveal ? `0 0 0 1px ${palette.glow}, 0 0 12px ${palette.glow}88` : "none"
                       }}
                     >
-                      {label}
+                      <div>{label}</div>
+                      {cell.isAvailable || cell.tile ? <div style={{ marginTop: 2, fontSize: 9, opacity: 0.86 }}>D{depthLabel}</div> : null}
                     </button>
                   );
                 })}

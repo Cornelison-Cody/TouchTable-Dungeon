@@ -24,7 +24,7 @@ const panelStyle = {
   padding: 14
 };
 
-const GRASSLAND_TEXTURE_URL = "/textures/grassland.webp";
+const GRASSLAND_TEXTURE_URL = "/textures/grassland.jpg";
 
 function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
@@ -550,16 +550,21 @@ function DungeonTableView({ onBackToMenu }) {
     if (!terrain) return null;
 
     if (terrain.id === "grassland" || terrain.id === "high_grass") {
+      const scale = 1.26;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
         <>
           <defs>
             <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
               <image
                 href={GRASSLAND_TEXTURE_URL}
-                x="0"
-                y="0"
-                width={width}
-                height={height}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
                 preserveAspectRatio="xMidYMid slice"
               />
             </pattern>
@@ -567,7 +572,7 @@ function DungeonTableView({ onBackToMenu }) {
           <polygon
             points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
             fill={`url(#${textureId})`}
-            opacity={0.52}
+            opacity={0.98}
           />
         </>
       );
@@ -1047,7 +1052,7 @@ function DungeonTableView({ onBackToMenu }) {
                     <li key={seat.seat} className="ttd-player">
                       <div style={{ minWidth: 0 }}>
                         <span className="ttd-seat">Seat {seat.seat}</span>
-                        <span className="ttd-name" style={{ opacity: seat.occupied ? 1 : 0.5 }}>
+                        <span className="ttd-name" style={{ opacity: seat.occupied ? (seat.connected === false ? 0.45 : 1) : 0.5 }}>
                           {seat.occupied ? seat.playerName : "Empty"}
                         </span>
                       </div>
@@ -1058,6 +1063,7 @@ function DungeonTableView({ onBackToMenu }) {
                           </span>
                         ) : null}
                         {seat.playerId && activePlayerId === seat.playerId ? <span className="ttd-pill">Active</span> : null}
+                        {seat.occupied && seat.playerId && seat.connected === false ? <span className="ttd-pill">Disconnected</span> : null}
                         {seat.occupied && seat.playerId ? (
                           <button className="ttd-btn warn" onClick={() => kickPlayer(seat.playerId, seat.playerName)}>
                             Kick
@@ -1213,6 +1219,7 @@ function DungeonTableView({ onBackToMenu }) {
                         ? "rgba(255, 197, 87, 0.22)"
                       : terrain.fill;
 
+                    const hasNativeGrassBorder = terrain.id === "grassland" || terrain.id === "high_grass";
                     const stroke = isHeroDown
                       ? "rgba(214, 138, 104, 0.7)"
                       : isEnemy
@@ -1221,8 +1228,10 @@ function DungeonTableView({ onBackToMenu }) {
                         ? "rgba(255, 201, 94, 0.62)"
                       : isActiveCell
                         ? "rgba(76, 214, 138, 0.72)"
-                        : "rgba(255, 255, 255, 0.24)";
-                    const strokeWidth = isActiveCell ? 2 : 0.9;
+                        : hasNativeGrassBorder
+                          ? "transparent"
+                          : "rgba(255, 255, 255, 0.24)";
+                    const strokeWidth = isActiveCell ? 2 : hasNativeGrassBorder ? 0 : 0.9;
 
                     return (
                       <div
@@ -1262,7 +1271,7 @@ function DungeonTableView({ onBackToMenu }) {
                             stroke={stroke}
                             strokeWidth={strokeWidth}
                           />
-                          {!isEnemy ? (
+                          {!isEnemy && terrain.id !== "grassland" && terrain.id !== "high_grass" ? (
                             <polygon
                               points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
                               fill={terrain.accent}
@@ -1519,6 +1528,9 @@ function KewlCardGameTableView({ onBackToMenu }) {
   const [enemyInspectId, setEnemyInspectId] = useState(null);
   const [cameraPx, setCameraPx] = useState({ x: 0, y: 0 });
   const [boardViewport, setBoardViewport] = useState({ width: 0, height: 0 });
+  const [focusedPlayerId, setFocusedPlayerId] = useState(null);
+  const [boardMaximized, setBoardMaximized] = useState(false);
+  const [boardZoom, setBoardZoom] = useState(1);
 
   const wsRef = useRef(null);
   const prevEnemyHpRef = useRef({});
@@ -1833,7 +1845,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
     for (const k of opts) moveOptions.add(k);
   }
 
-  const HEX_SIZE = 34;
+  const HEX_SIZE = 68;
   const HEX_W = HEX_SIZE * 2;
   const HEX_H = Math.sqrt(3) * HEX_SIZE;
   const HEX_STEP_X = HEX_SIZE * 1.5;
@@ -1849,7 +1861,21 @@ function KewlCardGameTableView({ onBackToMenu }) {
     updateViewport();
     window.addEventListener("resize", updateViewport);
     return () => window.removeEventListener("resize", updateViewport);
-  }, []);
+  }, [boardMaximized]);
+
+  useEffect(() => {
+    if (!boardMaximized) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    const onEsc = (ev) => {
+      if (ev.key === "Escape") setBoardMaximized(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [boardMaximized]);
 
   useEffect(() => {
     cameraPxRef.current = cameraPx;
@@ -1924,10 +1950,10 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
   const viewportW = boardViewport.width || 1;
   const viewportH = boardViewport.height || 1;
-  const worldLeft = cameraPx.x - viewportW / 2;
-  const worldTop = cameraPx.y - viewportH / 2;
-  const worldRight = cameraPx.x + viewportW / 2;
-  const worldBottom = cameraPx.y + viewportH / 2;
+  const worldLeft = cameraPx.x - viewportW / (2 * boardZoom);
+  const worldTop = cameraPx.y - viewportH / (2 * boardZoom);
+  const worldRight = cameraPx.x + viewportW / (2 * boardZoom);
+  const worldBottom = cameraPx.y + viewportH / (2 * boardZoom);
 
   const visibleMinX = Math.floor(worldLeft / HEX_STEP_X) - VIEW_PAD;
   const visibleMaxX = Math.ceil(worldRight / HEX_STEP_X) + VIEW_PAD;
@@ -1936,8 +1962,22 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
   function panBoardBy(dx, dy) {
     const curr = cameraPxRef.current;
-    animateCameraTo({ x: curr.x + dx, y: curr.y + dy }, 760);
+    animateCameraTo({ x: curr.x + dx / boardZoom, y: curr.y + dy / boardZoom }, 760);
   }
+
+  function focusCameraOnPlayer(playerId) {
+    if (!playerId) return;
+    const hero = heroByOwnerId.get(playerId);
+    if (!hero || hero.hp <= 0) return;
+    setFocusedPlayerId(playerId);
+    centerCameraOnUnit(hero);
+  }
+
+  useEffect(() => {
+    if (!focusedPlayerId) return;
+    const hero = heroes.find((h) => h.ownerPlayerId === focusedPlayerId) || null;
+    if (!hero || hero.hp <= 0) setFocusedPlayerId(null);
+  }, [focusedPlayerId, heroes]);
 
   function heroGlyph(hero) {
     const name = hero.ownerPlayerName || "";
@@ -1969,16 +2009,21 @@ function KewlCardGameTableView({ onBackToMenu }) {
     if (!terrain) return null;
 
     if (terrain.id === "grassland" || terrain.id === "high_grass") {
+      const scale = 1.26;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
         <>
           <defs>
             <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
               <image
                 href={GRASSLAND_TEXTURE_URL}
-                x="0"
-                y="0"
-                width={width}
-                height={height}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
                 preserveAspectRatio="xMidYMid slice"
               />
             </pattern>
@@ -1986,7 +2031,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
           <polygon
             points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
             fill={`url(#${textureId})`}
-            opacity={0.52}
+            opacity={0.98}
           />
         </>
       );
@@ -2416,8 +2461,8 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
         {error ? <div className="ttd-error">{error}</div> : null}
 
-        <div className="ttd-layout">
-          <div className="ttd-stack">
+        <div className="ttd-layout" style={boardMaximized ? { gridTemplateColumns: "1fr" } : undefined}>
+          <div className="ttd-stack" style={boardMaximized ? { display: "none" } : undefined}>
             <section style={panelStyle}>
               <h2 className="ttd-section-title">
                 <Icon path="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M15 15h1 M17 15h3 M15 17h5 M15 19h2 M19 19h1" />
@@ -2462,11 +2507,20 @@ function KewlCardGameTableView({ onBackToMenu }) {
               </h2>
               {publicState?.seats ? (
                 <ul className="ttd-players">
-                  {publicState.seats.map((seat) => (
-                    <li key={seat.seat} className="ttd-player">
+                  {publicState.seats.map((seat) => {
+                    const seatHero = seat.playerId ? heroByOwnerId.get(seat.playerId) : null;
+                    const canFocus = Boolean(seatHero && seatHero.hp > 0);
+                    const isFocused = Boolean(seat.playerId && seat.playerId === focusedPlayerId);
+                    return (
+                    <li
+                      key={seat.seat}
+                      className="ttd-player"
+                      onClick={canFocus ? () => focusCameraOnPlayer(seat.playerId) : undefined}
+                      style={canFocus ? { cursor: "pointer", borderColor: isFocused ? "rgba(112, 198, 236, 0.72)" : undefined, boxShadow: isFocused ? "0 0 0 1px rgba(112, 198, 236, 0.35) inset" : undefined } : undefined}
+                    >
                       <div style={{ minWidth: 0 }}>
                         <span className="ttd-seat">Seat {seat.seat}</span>
-                        <span className="ttd-name" style={{ opacity: seat.occupied ? 1 : 0.5 }}>
+                        <span className="ttd-name" style={{ opacity: seat.occupied ? (seat.connected === false ? 0.45 : 1) : 0.5 }}>
                           {seat.occupied ? seat.playerName : "Empty"}
                         </span>
                       </div>
@@ -2477,14 +2531,15 @@ function KewlCardGameTableView({ onBackToMenu }) {
                           </span>
                         ) : null}
                         {seat.playerId && activePlayerId === seat.playerId ? <span className="ttd-pill">Active</span> : null}
+                        {seat.occupied && seat.playerId && seat.connected === false ? <span className="ttd-pill">Disconnected</span> : null}
                         {seat.occupied && seat.playerId ? (
-                          <button className="ttd-btn warn" onClick={() => kickPlayer(seat.playerId, seat.playerName)}>
+                          <button className="ttd-btn warn" onClick={(e) => { e.stopPropagation(); kickPlayer(seat.playerId, seat.playerName); }}>
                             Kick
                           </button>
                         ) : null}
                       </div>
                     </li>
-                  ))}
+                  )})}
                 </ul>
               ) : (
                 <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for players...</p>
@@ -2543,21 +2598,38 @@ function KewlCardGameTableView({ onBackToMenu }) {
             style={{
               ...panelStyle,
               border: "1px solid rgba(32, 191, 183, 0.3)",
-              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)"
+              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)",
+              ...(boardMaximized
+                ? {
+                    position: "fixed",
+                    inset: 8,
+                    zIndex: 35,
+                    minHeight: "auto",
+                    height: "calc(100dvh - 16px)",
+                    margin: 0
+                  }
+                : null)
             }}
             className="ttd-board-shell"
           >
             <div className="ttd-board-head">
-              <h2 className="ttd-section-title" style={{ marginBottom: 0 }}>
-                <Icon path="M3 6h18 M3 12h18 M3 18h18 M6 3v18 M12 3v18 M18 3v18" />
-                Board
-              </h2>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className="ttd-pill">Live View</span>
-                <span className="ttd-pill">Terrain: {terrainTheme}</span>
+                <button className="ttd-btn" onClick={() => setBoardZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))}>
+                  Zoom Out
+                </button>
+                <span className="ttd-pill">{Math.round(boardZoom * 100)}%</span>
+                <button className="ttd-btn" onClick={() => setBoardZoom((z) => Math.min(2, Number((z + 0.25).toFixed(2))))}>
+                  Zoom In
+                </button>
+                <button className="ttd-btn" onClick={() => setBoardZoom(1)} disabled={Math.abs(boardZoom - 1) < 0.001}>
+                  Reset
+                </button>
               </div>
+              <button className="ttd-btn" onClick={() => setBoardMaximized((v) => !v)}>
+                {boardMaximized ? "Minimize" : "Maximize"}
+              </button>
             </div>
-            <div className="ttd-board-scroll" ref={boardScrollRef}>
+            <div className="ttd-board-scroll" ref={boardScrollRef} style={boardMaximized ? { minHeight: 0 } : undefined}>
               <button
                 className="ttd-pan-btn ttd-pan-top"
                 aria-label="Scroll board up"
@@ -2587,7 +2659,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                 W
               </button>
 
-              <div className="ttd-board-canvas">
+              <div className="ttd-board-canvas" style={boardMaximized ? { minHeight: 0 } : undefined}>
                 {Array.from({ length: visibleMaxX - visibleMinX + 1 }).map((_, xi) => {
                   const x = visibleMinX + xi;
                   return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
@@ -2605,8 +2677,10 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
                     const worldX = x * HEX_STEP_X;
                     const worldY = y * HEX_H + (x % 2 !== 0 ? HEX_H / 2 : 0);
-                    const left = worldX - cameraPx.x + boardViewport.width / 2;
-                    const top = worldY - cameraPx.y + boardViewport.height / 2;
+                    const left = (worldX - cameraPx.x) * boardZoom + boardViewport.width / 2;
+                    const top = (worldY - cameraPx.y) * boardZoom + boardViewport.height / 2;
+                    const tileW = HEX_W * boardZoom;
+                    const tileH = HEX_H * boardZoom;
 
                     const label = heroHere
                       ? isHeroDown
@@ -2632,6 +2706,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                         ? "rgba(255, 197, 87, 0.22)"
                       : terrain.fill;
 
+                    const hasNativeGrassBorder = terrain.id === "grassland" || terrain.id === "high_grass";
                     const stroke = isHeroDown
                       ? "rgba(214, 138, 104, 0.7)"
                       : isEnemy
@@ -2640,8 +2715,10 @@ function KewlCardGameTableView({ onBackToMenu }) {
                         ? "rgba(255, 201, 94, 0.62)"
                       : isActiveCell
                         ? "rgba(76, 214, 138, 0.72)"
-                        : "rgba(255, 255, 255, 0.24)";
-                    const strokeWidth = isActiveCell ? 2 : 0.9;
+                        : hasNativeGrassBorder
+                          ? "transparent"
+                          : "rgba(255, 255, 255, 0.24)";
+                    const strokeWidth = isActiveCell ? 2 : hasNativeGrassBorder ? 0 : 0.9;
 
                     return (
                       <div
@@ -2654,23 +2731,23 @@ function KewlCardGameTableView({ onBackToMenu }) {
                           position: "absolute",
                           left,
                           top,
-                          width: HEX_W,
-                          height: HEX_H,
+                          width: tileW,
+                          height: tileH,
                           pointerEvents: isEnemy ? "auto" : "none",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                           userSelect: "none",
-                          fontSize: 11,
-                          padding: 4,
+                          fontSize: Math.max(9, 11 * boardZoom),
+                          padding: Math.max(2, 4 * boardZoom),
                           color: "var(--ttd-ink)",
                           fontWeight: 800,
                           cursor: isEnemy ? "pointer" : "default"
                         }}
                       >
                         <svg
-                          width={HEX_W}
-                          height={HEX_H}
+                          width={tileW}
+                          height={tileH}
                           viewBox={`0 0 ${HEX_W} ${HEX_H}`}
                           aria-hidden="true"
                           style={{ position: "absolute", inset: 0 }}
@@ -2681,7 +2758,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                             stroke={stroke}
                             strokeWidth={strokeWidth}
                           />
-                          {!isEnemy ? (
+                          {!isEnemy && terrain.id !== "grassland" && terrain.id !== "high_grass" ? (
                             <polygon
                               points={`${HEX_W * 0.25},0 ${HEX_W * 0.75},0 ${HEX_W},${HEX_H * 0.5} ${HEX_W * 0.75},${HEX_H} ${HEX_W * 0.25},${HEX_H} 0,${HEX_H * 0.5}`}
                               fill={terrain.accent}
@@ -4454,23 +4531,5 @@ export default function App() {
     />
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

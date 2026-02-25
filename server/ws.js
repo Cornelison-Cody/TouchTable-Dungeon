@@ -565,10 +565,56 @@ export function setupWebSocket(server) {
   }
 
   function isPlayerConnected(playerId) {
-    for (const info of clients.values()) {
+    for (const [clientWs, info] of clients.entries()) {
+      if (clientWs.readyState !== clientWs.OPEN) continue;
       if (info.sessionId === session.sessionId && info.role === Role.PHONE && info.playerId === playerId) return true;
     }
     return false;
+  }
+
+  function connectedHeroIds() {
+    if (!game?.heroes) return [];
+    return Object.keys(game.heroes).filter((playerId) => isPlayerConnected(playerId));
+  }
+
+  function reconcileTurnOrderWithConnectedPlayers() {
+    if (!game) return null;
+    const order = Array.isArray(game.turn?.order) ? game.turn.order : [];
+    const seen = new Set();
+    const nextOrder = [];
+
+    for (const playerId of order) {
+      if (!playerId || seen.has(playerId)) continue;
+      if (!game.heroes?.[playerId]) continue;
+      if (!isPlayerConnected(playerId)) continue;
+      seen.add(playerId);
+      nextOrder.push(playerId);
+    }
+
+    for (const playerId of connectedHeroIds()) {
+      if (seen.has(playerId)) continue;
+      seen.add(playerId);
+      nextOrder.push(playerId);
+    }
+
+    game.turn.order = nextOrder;
+    if (!nextOrder.length) {
+      game.turn.activePlayerId = null;
+      game.turn.activeIndex = 0;
+      return null;
+    }
+
+    const activeIdx = nextOrder.indexOf(game.turn.activePlayerId);
+    if (activeIdx >= 0 && isHeroAlive(game.heroes[game.turn.activePlayerId])) {
+      game.turn.activeIndex = activeIdx;
+      return game.turn.activePlayerId;
+    }
+
+    const start = Math.max(
+      0,
+      Math.min(Number.isFinite(game.turn.activeIndex) ? game.turn.activeIndex : 0, nextOrder.length - 1)
+    );
+    return setNextActiveFrom(start);
   }
 
   function send(ws, msg) {
@@ -673,7 +719,8 @@ export function setupWebSocket(server) {
         seat: s.seat,
         occupied: s.occupied,
         playerName: s.playerName,
-        playerId: s.playerId
+        playerId: s.playerId,
+        connected: s.playerId ? isPlayerConnected(s.playerId) : false
       })),
       game: game
         ? {
@@ -695,7 +742,7 @@ export function setupWebSocket(server) {
               victories: campaign.progression?.victories || 0
             },
             turn: { activePlayerId: game.turn.activePlayerId, activePlayerName: nameById.get(game.turn.activePlayerId) || campaignNameById.get(game.turn.activePlayerId) || null, order: game.turn.order, apRemaining: game.turn.apRemaining, apMax: game.turn.apMax },
-            heroes: Object.values(game.heroes).map((h) => ({
+            heroes: Object.values(game.heroes).filter((h) => h && isPlayerConnected(h.ownerPlayerId)).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
               ownerPlayerName: nameById.get(h.ownerPlayerId) || campaignNameById.get(h.ownerPlayerId) || null,
               level: levelById.get(h.ownerPlayerId) || 1,
@@ -848,7 +895,7 @@ export function setupWebSocket(server) {
                 canCraft
               };
             }),
-            heroesPublic: Object.values(game.heroes).map((h) => ({
+            heroesPublic: Object.values(game.heroes).filter((h) => h && isPlayerConnected(h.ownerPlayerId)).map((h) => ({
               ownerPlayerId: h.ownerPlayerId,
               ownerPlayerName:
                 session.seats.find((s) => s.playerId === h.ownerPlayerId)?.playerName ||
@@ -960,6 +1007,7 @@ export function setupWebSocket(server) {
   }
 
   function emitViews() {
+    reconcileTurnOrderWithConnectedPlayers();
     saveCampaignSnapshot();
     for (const [ws, info] of clients.entries()) {
       if (info.sessionId !== session.sessionId) continue;
@@ -978,6 +1026,7 @@ export function setupWebSocket(server) {
   }
 
   function requireActive(ws, id, actorPlayerId) {
+    reconcileTurnOrderWithConnectedPlayers();
     if (!game?.turn.activePlayerId) {
       reject(ws, id, "NO_ACTIVE_PLAYER", "No active player.");
       return false;
@@ -992,7 +1041,7 @@ export function setupWebSocket(server) {
   function cellOccupiedByOtherHero(x, y, actorPlayerId) {
     if (!game) return false;
     for (const h of Object.values(game.heroes)) {
-      if (h.ownerPlayerId !== actorPlayerId && h.hp > 0 && h.x === x && h.y === y) return true;
+      if (h.ownerPlayerId !== actorPlayerId && h.hp > 0 && isPlayerConnected(h.ownerPlayerId) && h.x === x && h.y === y) return true;
     }
     return false;
   }
@@ -1004,6 +1053,7 @@ export function setupWebSocket(server) {
     const campaignNameById = new Map((campaign.players || []).map((p) => [p.id, p.name]));
     return Object.values(game.heroes || {})
       .filter((h) => h.ownerPlayerId !== actorPlayerId)
+      .filter((h) => isPlayerConnected(h.ownerPlayerId))
       .filter((h) => h.hp <= 0)
       .map((h) => ({
         playerId: h.ownerPlayerId,
@@ -1218,7 +1268,7 @@ export function setupWebSocket(server) {
     const terrainSeed = game?.terrain?.seed ?? 0;
     const enemyAwarenessRange = 8;
 
-    const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h));
+    const aliveHeroes = Object.values(game.heroes).filter((h) => isHeroAlive(h) && isPlayerConnected(h.ownerPlayerId));
     if (!aliveHeroes.length) return;
 
     for (const enemyUnit of livingEnemies(game)) {
@@ -1307,7 +1357,7 @@ export function setupWebSocket(server) {
     hero.x = nx; hero.y = ny;
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} moves to (${nx},${ny}).` });
     collectLootAt(actorPlayerId, nx, ny);
-    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - moveCost);
     send(ws, makeMsg(MsgType.OK, { accepted: true }, id));
     emitViews();
   }
@@ -1425,7 +1475,7 @@ export function setupWebSocket(server) {
       at: Date.now()
     };
     game.log.push({ at: Date.now(), msg: `${shortName(actorPlayerId)} deals ${dealt} damage to ${target.name || "enemy"}.` });
-    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - moveCost);
+    game.turn.apRemaining = Math.max(0, (game.turn.apRemaining ?? 0) - 1);
     if (target.hp <= 0) markEnemyDefeated(target, actorPlayerId);
 
     send(ws, makeMsg(MsgType.OK, { accepted: true, dealt }, id));
@@ -1581,6 +1631,7 @@ export function setupWebSocket(server) {
     pushGameHistory();
     game.log.push({ at: Date.now(), msg: `Hero ${shortName(actorPlayerId)} ends turn.` });
     enemyTakeTurn();
+    reconcileTurnOrderWithConnectedPlayers();
 
     const next = nextActivePlayer(game);
     game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No heroes left standing." });
@@ -1602,7 +1653,7 @@ export function setupWebSocket(server) {
     for (let step = 0; step < n; step += 1) {
       const idx = (startIdx0 + step + n) % n;
       const pid = order[idx];
-      if (isHeroAlive(game.heroes[pid])) {
+      if (isHeroAlive(game.heroes[pid]) && isPlayerConnected(pid)) {
         game.turn.activeIndex = idx;
         game.turn.activePlayerId = pid;
         resetTurnAP(game);
@@ -1645,13 +1696,13 @@ export function setupWebSocket(server) {
     const terrainSeed = game?.terrain?.seed ?? 0;
     const occupied = new Set(
       Object.values(game.heroes)
-        .filter((h) => isHeroAlive(h))
+        .filter((h) => isHeroAlive(h) && isPlayerConnected(h.ownerPlayerId))
         .map((h) => `${h.x},${h.y}`)
     );
     for (const enemyUnit of livingEnemies(game)) occupied.add(`${enemyUnit.x},${enemyUnit.y}`);
     const anchor =
       game.heroes[game.turn.activePlayerId] ||
-      Object.values(game.heroes).find((h) => isHeroAlive(h)) ||
+      Object.values(game.heroes).find((h) => isHeroAlive(h) && isPlayerConnected(h.ownerPlayerId)) ||
       { x: 0, y: 0 };
     const target = {
       x: anchor.x + Math.floor(Math.random() * 13) - 6,
@@ -1859,13 +1910,13 @@ export function setupWebSocket(server) {
       if (ctx) {
         bindContext(ctx);
         if (info?.role === Role.TABLE && tableWs === ws) tableWs = null;
-        if (info?.role === Role.PHONE && info.seat) {
-          const seatObj = session.seats[info.seat - 1];
-          if (seatObj && seatObj.playerId === info.playerId) {
-            seatObj.occupied = false;
-            seatObj.playerName = null;
-            seatObj.playerId = null;
-            seatObj.resumeToken = null;
+        if (info?.role === Role.PHONE && info.playerId) {
+          const wasActive = game?.turn?.activePlayerId === info.playerId;
+          const playerName = shortName(info.playerId);
+          const next = reconcileTurnOrderWithConnectedPlayers();
+          if (game) {
+            game.log.push({ at: Date.now(), msg: `${playerName} disconnected.` });
+            if (wasActive) game.log.push({ at: Date.now(), msg: next ? `Turn: ${shortName(next)}.` : "No connected heroes available." });
           }
         }
         syncContext(ctx);
