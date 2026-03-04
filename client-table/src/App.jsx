@@ -550,7 +550,7 @@ function DungeonTableView({ onBackToMenu }) {
     if (!terrain) return null;
 
     if (terrain.id === "grassland" || terrain.id === "high_grass") {
-      const scale = 1.26;
+      const scale = 1.33;
       const texW = width * scale;
       const texH = height * scale;
       const texX = (width - texW) / 2;
@@ -565,7 +565,7 @@ function DungeonTableView({ onBackToMenu }) {
                 y={texY}
                 width={texW}
                 height={texH}
-                preserveAspectRatio="xMidYMid slice"
+                preserveAspectRatio="xMidYMid meet"
               />
             </pattern>
           </defs>
@@ -2135,7 +2135,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
     if (!terrain) return null;
 
     if (terrain.id === "grassland" || terrain.id === "high_grass") {
-      const scale = 1.26;
+      const scale = 1.33;
       const texW = width * scale;
       const texH = height * scale;
       const texX = (width - texW) / 2;
@@ -2150,7 +2150,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                 y={texY}
                 width={texW}
                 height={texH}
-                preserveAspectRatio="xMidYMid slice"
+                preserveAspectRatio="xMidYMid meet"
               />
             </pattern>
           </defs>
