@@ -24,7 +24,7 @@ const panelStyle = {
   padding: 14
 };
 
-const GRASSLAND_TEXTURE_URL = "/textures/grassland.jpg";
+const GRASSLAND_TEXTURE_URL = "/textures/grassland.png";
 
 function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";

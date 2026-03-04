@@ -11,5 +11,8 @@
     "dev:server": "npm --workspace server run dev",
     "dev:table": "npm --workspace client-table run dev",
     "dev:phone": "npm --workspace client-phone run dev"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5"
   }
 }

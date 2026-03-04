@@ -3,12 +3,19 @@ import path from "path";
 import sharp from "sharp";
 
 const rootDir = process.cwd();
-const inputPath = path.join(rootDir, "unprocessedImages", "grassland.jpg");
+const inputCandidates = ["grassland.png", "grassland.jpg", "grassland.jpeg", "grassland.webp"].map((name) =>
+  path.join(rootDir, "unprocessedImages", name)
+);
+const inputPath = inputCandidates.find((candidate) => fs.existsSync(candidate));
 const outputDir = path.join(rootDir, "client-table", "public", "textures");
 const outputPath = path.join(outputDir, "grassland.webp");
 
-if (!fs.existsSync(inputPath)) {
-  console.error(`Input not found: ${inputPath}`);
+if (!inputPath) {
+  console.error(
+    `Input not found. Expected one of:\n${inputCandidates
+      .map((candidate) => `- ${candidate}`)
+      .join("\n")}`
+  );
   process.exit(1);
 }
 

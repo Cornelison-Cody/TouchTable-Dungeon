@@ -1,7 +1,7 @@
 Place custom terrain texture files in this folder.
 
 Expected grassland texture path used by the app:
-- grassland.jpg
+- grassland.png
 
 Recommended export:
 - Format: JPG, PNG, or WebP
