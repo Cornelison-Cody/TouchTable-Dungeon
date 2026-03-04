@@ -432,7 +432,14 @@ export function setupWebSocket(server) {
       id: c.id,
       title: c.title,
       createdAt: c.createdAt,
-      updatedAt: c.updatedAt
+      updatedAt: c.updatedAt,
+      currentScenarioId: c.progression?.currentScenarioId || null,
+      setup: c.setup
+        ? {
+            playerCount: c.setup.playerCount || 0,
+            playerNames: Array.isArray(c.setup.playerNames) ? c.setup.playerNames : []
+          }
+        : { playerCount: 0, playerNames: [] }
     }));
   }
 
@@ -1999,7 +2006,11 @@ export function setupWebSocket(server) {
         if (!campaignState) return reject(ws, msg.id, "BAD_CAMPAIGN", "Campaign not found.");
       } else {
         const title = (msg.payload?.title ?? "").toString().trim().slice(0, 48) || "New Campaign";
-        campaignState = createCampaign(campaignStore, requestedGameId, title);
+        campaignState = createCampaign(campaignStore, requestedGameId, {
+          title,
+          playerNames: msg.payload?.playerNames,
+          playerCount: msg.payload?.playerCount
+        });
         touchCampaign(campaignState);
         saveCampaignStore(campaignStore);
       }
@@ -2016,7 +2027,12 @@ export function setupWebSocket(server) {
           sessionId: session.sessionId,
           joinUrl: getJoinUrl(),
           gameId: requestedGameId,
-          campaign: { id: campaignState.id, title: campaignState.title }
+          campaign: {
+            id: campaignState.id,
+            title: campaignState.title,
+            currentScenarioId: campaignState.progression?.currentScenarioId || null,
+            setup: campaignState.setup || { playerCount: 0, playerNames: [] }
+          }
         })
       );
       send(ws, makeMsg(MsgType.CAMPAIGN_LIST, { gameId: requestedGameId, campaigns: listCampaignSummaries(requestedGameId) }, "campaign-list"));

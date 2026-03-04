@@ -6,6 +6,38 @@ import { v4 as uuid } from "uuid";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CAMPAIGN_STORE_FILE = path.join(__dirname, ".campaigns.json");
 const LEGACY_CAMPAIGN_FILE = path.join(__dirname, ".campaign-state.json");
+const MAX_CAMPAIGN_SETUP_PLAYERS = 8;
+
+function sanitizeCampaignPlayerNames(rawNames) {
+  const src = Array.isArray(rawNames)
+    ? rawNames
+    : typeof rawNames === "string"
+      ? rawNames.split(/[\n,]+/)
+      : [];
+  return src
+    .map((name) => (name ?? "").toString().trim().slice(0, 32))
+    .filter(Boolean)
+    .slice(0, MAX_CAMPAIGN_SETUP_PLAYERS);
+}
+
+function sanitizeCampaignSetup(rawSetup, rawPlayers = []) {
+  const src = rawSetup && typeof rawSetup === "object" ? rawSetup : {};
+  const fallbackNames = Array.isArray(rawPlayers)
+    ? rawPlayers.map((p) => (p?.name ?? "").toString().trim()).filter(Boolean)
+    : [];
+  const configuredNames = sanitizeCampaignPlayerNames(src.playerNames);
+  const names = (configuredNames.length ? configuredNames : fallbackNames).slice(0, MAX_CAMPAIGN_SETUP_PLAYERS);
+
+  let playerCount = Number(src.playerCount);
+  if (!Number.isFinite(playerCount)) playerCount = names.length;
+  playerCount = Math.max(0, Math.min(MAX_CAMPAIGN_SETUP_PLAYERS, Math.floor(playerCount)));
+  if (playerCount === 0 && names.length) playerCount = names.length;
+
+  return {
+    playerCount,
+    playerNames: names.slice(0, playerCount)
+  };
+}
 
 export function makeDefaultRpgProfile() {
   return {
@@ -29,14 +61,22 @@ export function makeDefaultRpgProfile() {
   };
 }
 
-export function makeDefaultCampaignState({ title } = {}) {
+export function makeDefaultCampaignState({ title, playerNames, playerCount } = {}) {
   const now = Date.now();
+  const setup = sanitizeCampaignSetup({ playerNames, playerCount });
+  const seededPlayers =
+    setup.playerCount > 0
+      ? Array.from({ length: setup.playerCount }, (_, idx) =>
+          sanitizeCampaignPlayer({ name: setup.playerNames[idx] || `Adventurer ${idx + 1}` })
+        )
+      : [];
   return {
     id: `campaign-${uuid().slice(0, 8)}`,
     title: typeof title === "string" && title.trim() ? title.trim() : "New Campaign",
     createdAt: now,
     updatedAt: now,
-    players: [],
+    players: seededPlayers,
+    setup,
     progression: {
       currentScenarioId: "scenario-1",
       completedScenarioIds: [],
@@ -57,6 +97,7 @@ function sanitizeCampaign(raw) {
   const base = makeDefaultCampaignState();
   const state = raw && typeof raw === "object" ? raw : {};
   const rawPlayers = Array.isArray(state.players) ? state.players : [];
+  const safePlayers = rawPlayers.map((p) => sanitizeCampaignPlayer(p));
   const createdAt = Number(state.createdAt) || base.createdAt;
   const updatedAt = Number(state.updatedAt) || createdAt;
   return {
@@ -64,7 +105,8 @@ function sanitizeCampaign(raw) {
     ...state,
     createdAt,
     updatedAt,
-    players: rawPlayers.map((p) => sanitizeCampaignPlayer(p)),
+    players: safePlayers,
+    setup: sanitizeCampaignSetup(state.setup, safePlayers),
     progression: {
       ...base.progression,
       ...(state.progression && typeof state.progression === "object" ? state.progression : {})
@@ -179,9 +221,19 @@ export function getCampaign(store, gameId, campaignId) {
   return entry.campaigns.find((c) => c.id === campaignId) || null;
 }
 
-export function createCampaign(store, gameId, title) {
+export function createCampaign(store, gameId, titleOrOptions) {
   const entry = ensureGameEntry(store, gameId);
-  const campaign = makeDefaultCampaignState({ title });
+  const options =
+    typeof titleOrOptions === "string"
+      ? { title: titleOrOptions }
+      : titleOrOptions && typeof titleOrOptions === "object"
+        ? titleOrOptions
+        : {};
+  const campaign = makeDefaultCampaignState({
+    title: options.title,
+    playerNames: options.playerNames,
+    playerCount: options.playerCount
+  });
   entry.campaigns.push(campaign);
   return campaign;
 }

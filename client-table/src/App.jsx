@@ -1509,6 +1509,77 @@ function DungeonTableView({ onBackToMenu }) {
   );
 }
 
+
+const KEWL_SCENARIOS = [
+  {
+    id: "scenario-1",
+    title: "Rift Breach",
+    chapter: "Opening",
+    teaser: "A fresh breach is bleeding hostile energy into the frontier.",
+    intel: "Fast skirmishes, unstable terrain, and roaming rift spawn.",
+    difficulty: "Low",
+    estDuration: "20-30 min",
+    rewardHint: "Unlocks the first campaign split.",
+    selectable: true,
+    x: 18,
+    y: 52
+  },
+  {
+    id: "scenario-2a",
+    title: "Ironroot Hollow",
+    chapter: "Branch A",
+    teaser: "Track corrupted growth through choking caverns.",
+    intel: "Opens if the team secures relic shards in Rift Breach.",
+    difficulty: "Medium",
+    estDuration: "25-35 min",
+    rewardHint: "Potential ally route.",
+    selectable: false,
+    x: 50,
+    y: 24
+  },
+  {
+    id: "scenario-2b",
+    title: "Shatterline Convoy",
+    chapter: "Branch B",
+    teaser: "Escort survivors through artillery-scarred roads.",
+    intel: "Opens if the team prioritizes evacuation choices.",
+    difficulty: "Medium",
+    estDuration: "25-35 min",
+    rewardHint: "Resource cache route.",
+    selectable: false,
+    x: 50,
+    y: 80
+  },
+  {
+    id: "scenario-3",
+    title: "Citadel Threshold",
+    chapter: "Convergence",
+    teaser: "Face the breach command node once paths reconverge.",
+    intel: "Requires one branch completion from Chapter 2.",
+    difficulty: "High",
+    estDuration: "35-45 min",
+    rewardHint: "Chapter clear unlock.",
+    selectable: false,
+    x: 82,
+    y: 52
+  }
+];
+
+const KEWL_SCENARIO_LINKS = [
+  { id: "s1-s2a", x1: 18, y1: 52, x2: 50, y2: 24, unlocked: true },
+  { id: "s1-s2b", x1: 18, y1: 52, x2: 50, y2: 80, unlocked: true },
+  { id: "s2a-s3", x1: 50, y1: 24, x2: 82, y2: 52, unlocked: false },
+  { id: "s2b-s3", x1: 50, y1: 80, x2: 82, y2: 52, unlocked: false }
+];
+
+function parseCampaignPlayerNames(raw) {
+  const src = (raw ?? "").toString();
+  return src
+    .split(/[\n,]+/)
+    .map((name) => name.trim().slice(0, 32))
+    .filter(Boolean);
+}
+
 function KewlCardGameTableView({ onBackToMenu }) {
   const gameId = "kewl-card-game";
   const [wsUrl] = useState(makeWsUrl());
@@ -1517,7 +1588,13 @@ function KewlCardGameTableView({ onBackToMenu }) {
   const [campaigns, setCampaigns] = useState([]);
   const [campaignPromptOpen, setCampaignPromptOpen] = useState(true);
   const [campaignName, setCampaignName] = useState("");
+  const [campaignPlayerNames, setCampaignPlayerNames] = useState("");
+  const [campaignPlayerCount, setCampaignPlayerCount] = useState(4);
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
   const [campaignError, setCampaignError] = useState(null);
+  const [scenarioSelectorOpen, setScenarioSelectorOpen] = useState(false);
+  const [selectedScenarioId, setSelectedScenarioId] = useState("scenario-1");
+  const [scenarioEmbarked, setScenarioEmbarked] = useState(false);
   const [publicState, setPublicState] = useState(null);
   const [error, setError] = useState(null);
   const [tableHitFx, setTableHitFx] = useState(null);
@@ -1561,7 +1638,11 @@ function KewlCardGameTableView({ onBackToMenu }) {
         } else if (msg.t === MsgType.SESSION_INFO) {
           setSessionInfo(msg.payload);
           setCampaignPromptOpen(false);
+          setCreatingCampaign(false);
           setCampaignError(null);
+          setSelectedScenarioId("scenario-1");
+          setScenarioEmbarked(false);
+          setScenarioSelectorOpen(true);
         } else if (msg.t === MsgType.STATE_PUBLIC) {
           setPublicState(msg.payload?.state ?? null);
         } else if (msg.t === MsgType.ERROR) {
@@ -1596,6 +1677,8 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
   function selectCampaign(campaignId) {
     setCampaignError(null);
+    setScenarioEmbarked(false);
+    setScenarioSelectorOpen(false);
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       setCampaignError("Not connected to server.");
@@ -1610,14 +1693,35 @@ function KewlCardGameTableView({ onBackToMenu }) {
       setCampaignError("Enter a campaign name.");
       return;
     }
+    const playerCount = Math.max(1, Math.min(6, Math.floor(Number(campaignPlayerCount) || 0)));
+    const playerNames = parseCampaignPlayerNames(campaignPlayerNames);
+    if (!playerNames.length) {
+      setCampaignError("Enter at least one player name.");
+      return;
+    }
+    if (playerNames.length < playerCount) {
+      setCampaignError(`Provide at least ${playerCount} player names.`);
+      return;
+    }
     setCampaignError(null);
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       setCampaignError("Not connected to server.");
       return;
     }
-    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, title }, "campaign-select")));
+    ws.send(
+      JSON.stringify(
+        makeMsg(
+          MsgType.CAMPAIGN_SELECT,
+          { gameId, title, playerNames: playerNames.slice(0, playerCount), playerCount },
+          "campaign-select"
+        )
+      )
+    );
     setCampaignName("");
+    setCampaignPlayerNames("");
+    setCampaignPlayerCount(4);
+    setCreatingCampaign(false);
   }
   function spawnEnemyForTesting() {
     sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
@@ -1635,7 +1739,27 @@ function KewlCardGameTableView({ onBackToMenu }) {
     setKickPrompt(null);
     setEnemyInspectId(null);
     setQrOpen(false);
+    setScenarioEmbarked(false);
+    setSelectedScenarioId("scenario-1");
+    setScenarioSelectorOpen(true);
     sendTableAction(ActionType.NEW_CAMPAIGN, {}, "new-campaign");
+  }
+
+  function openCampaignPicker() {
+    setCampaignError(null);
+    setCreatingCampaign(false);
+    setCampaignPromptOpen(true);
+  }
+
+  function openScenarioDetails(scenarioId) {
+    setSelectedScenarioId(scenarioId);
+  }
+
+  function embarkSelectedScenario() {
+    const selected = KEWL_SCENARIOS.find((node) => node.id === selectedScenarioId);
+    if (!selected || !selected.selectable) return;
+    setScenarioEmbarked(true);
+    setScenarioSelectorOpen(false);
   }
 
   function kickPlayer(playerId, playerName) {
@@ -1731,6 +1855,8 @@ function KewlCardGameTableView({ onBackToMenu }) {
   const joinUrl = withGameParam(sessionInfo?.joinUrl || "", "kewl-card-game");
   const campaignTitle = sessionInfo?.campaign?.title || '';
   const showCampaignPrompt = campaignPromptOpen;
+  const showScenarioSelector = Boolean(sessionInfo) && !showCampaignPrompt && (scenarioSelectorOpen || !scenarioEmbarked);
+  const selectedScenario = KEWL_SCENARIOS.find((node) => node.id === selectedScenarioId) || KEWL_SCENARIOS[0];
   const game = publicState?.game || null;
   const terrainSeed = game?.terrain?.seed ?? 0;
   const terrainTheme = game?.terrain?.theme || "frostwild-frontier";
@@ -2426,9 +2552,181 @@ function KewlCardGameTableView({ onBackToMenu }) {
           height: 148px;
           margin-bottom: 10px;
         }
+        .ttd-campaign-list {
+          display: grid;
+          gap: 8px;
+          max-height: 260px;
+          overflow: auto;
+        }
+        .ttd-campaign-option {
+          width: 100%;
+          text-align: left;
+          display: grid;
+          gap: 4px;
+        }
+        .ttd-campaign-option-sub {
+          color: var(--ttd-sub);
+          font-size: 0.78rem;
+          font-weight: 700;
+        }
+        .ttd-input {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 8px 10px;
+          border-radius: 10px;
+          border: 1px solid rgba(148, 166, 186, 0.35);
+          background: rgba(12, 18, 26, 0.65);
+          color: var(--ttd-ink);
+        }
+        .ttd-textarea {
+          min-height: 92px;
+          resize: vertical;
+          font: inherit;
+        }
+        .ttd-field-hint {
+          margin-top: 6px;
+          color: var(--ttd-sub);
+          font-size: 0.78rem;
+          font-weight: 700;
+        }
+        .ttd-scenario-backdrop {
+          z-index: 26;
+          background:
+            radial-gradient(circle at 10% 10%, rgba(32, 191, 183, 0.22), transparent 46%),
+            radial-gradient(circle at 90% 20%, rgba(74, 134, 214, 0.2), transparent 42%),
+            rgba(7, 14, 22, 0.76);
+        }
+        .ttd-scenario-shell {
+          width: min(1080px, 98vw);
+          border-radius: 20px;
+          border: 1px solid rgba(148, 166, 186, 0.26);
+          background: linear-gradient(170deg, rgba(13, 20, 29, 0.98), rgba(17, 27, 38, 0.96));
+          box-shadow: 0 26px 62px rgba(0, 0, 0, 0.56);
+          padding: 16px;
+        }
+        .ttd-scenario-grid {
+          display: grid;
+          grid-template-columns: 1.45fr 1fr;
+          gap: 14px;
+        }
+        .ttd-scenario-map {
+          position: relative;
+          border-radius: 16px;
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          min-height: 380px;
+          background:
+            radial-gradient(circle at 20% 25%, rgba(32, 191, 183, 0.16), transparent 40%),
+            radial-gradient(circle at 80% 75%, rgba(74, 134, 214, 0.14), transparent 45%),
+            linear-gradient(155deg, rgba(12, 20, 30, 0.95), rgba(16, 24, 34, 0.96));
+          overflow: hidden;
+        }
+        .ttd-scenario-links {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          pointer-events: none;
+        }
+        .ttd-scenario-node {
+          position: absolute;
+          transform: translate(-50%, -50%);
+          width: 180px;
+          border-radius: 14px;
+          border: 1px solid rgba(112, 198, 236, 0.32);
+          background: rgba(18, 28, 40, 0.9);
+          color: var(--ttd-ink);
+          text-align: left;
+          padding: 10px;
+          box-shadow: 0 8px 22px rgba(0, 0, 0, 0.36);
+          cursor: pointer;
+          transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+        .ttd-scenario-node:hover:not(:disabled) {
+          transform: translate(-50%, -52%);
+          border-color: rgba(126, 223, 210, 0.68);
+          box-shadow: 0 12px 26px rgba(0, 0, 0, 0.42);
+        }
+        .ttd-scenario-node:disabled {
+          cursor: not-allowed;
+        }
+        .ttd-scenario-node.locked {
+          border-color: rgba(148, 166, 186, 0.22);
+          background: rgba(25, 32, 41, 0.88);
+          color: rgba(204, 215, 224, 0.82);
+        }
+        .ttd-scenario-node.selected {
+          border-color: rgba(126, 223, 210, 0.8);
+          box-shadow: 0 0 0 1px rgba(126, 223, 210, 0.42), 0 16px 30px rgba(0, 0, 0, 0.46);
+        }
+        .ttd-scenario-kicker {
+          display: block;
+          color: var(--ttd-sub);
+          font-size: 0.7rem;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+          margin-bottom: 3px;
+        }
+        .ttd-scenario-name {
+          display: block;
+          font-size: 0.95rem;
+          font-weight: 800;
+          margin-bottom: 4px;
+        }
+        .ttd-scenario-teaser {
+          display: block;
+          color: var(--ttd-sub);
+          font-size: 0.78rem;
+          line-height: 1.35;
+        }
+        .ttd-scenario-detail {
+          border-radius: 16px;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: rgba(15, 22, 31, 0.95);
+          padding: 14px;
+          display: grid;
+          align-content: start;
+          gap: 10px;
+        }
+        .ttd-detail-chip-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .ttd-detail-chip {
+          border-radius: 999px;
+          border: 1px solid rgba(148, 166, 186, 0.28);
+          padding: 4px 9px;
+          font-size: 0.74rem;
+          font-weight: 800;
+          color: var(--ttd-sub);
+          background: rgba(19, 27, 37, 0.78);
+        }
+        .ttd-scenario-branch-note {
+          margin: 0;
+          color: var(--ttd-sub);
+          font-size: 0.84rem;
+          line-height: 1.42;
+        }
+        .ttd-scenario-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+        }
         @media (max-width: 1060px) {
           .ttd-layout {
             grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 960px) {
+          .ttd-scenario-grid {
+            grid-template-columns: 1fr;
+          }
+          .ttd-scenario-map {
+            min-height: 320px;
+          }
+          .ttd-scenario-node {
+            width: 168px;
           }
         }
         @keyframes tvHitPulse {
@@ -2481,7 +2779,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                 <button className="ttd-btn danger" onClick={startNewCampaign}>
                   New Campaign
                 </button>
-                <button className="ttd-btn" onClick={() => setCampaignPromptOpen(true)}>
+                <button className="ttd-btn" onClick={openCampaignPicker}>
                   Switch Campaign
                 </button>
                 <button
@@ -2883,45 +3181,165 @@ function KewlCardGameTableView({ onBackToMenu }) {
         <div className="ttd-modal-backdrop" onClick={() => {}}>
           <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ttd-modal-head">
-              <h3>Choose Campaign</h3>
+              <h3>{creatingCampaign ? "Create Campaign" : "Choose Campaign"}</h3>
             </div>
             <div style={{ display: "grid", gap: 12 }}>
-              <div>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Start new</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    value={campaignName}
-                    placeholder="Campaign name"
-                    onChange={(e) => setCampaignName(e.target.value)}
-                    style={{ flex: 1, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(148, 166, 186, 0.35)", background: "rgba(12, 18, 26, 0.65)", color: "var(--ttd-ink)" }}
-                  />
-                  <button className="ttd-btn primary" onClick={createCampaignFromName}>
-                    Start
-                  </button>
-                </div>
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Load existing</div>
-                <div style={{ display: "grid", gap: 6, maxHeight: 260, overflow: "auto" }}>
-                  {campaigns.length ? (
-                    campaigns.map((c) => (
-                      <button key={c.id} className="ttd-btn" onClick={() => selectCampaign(c.id)}>
-                        {c.title}
-                      </button>
-                    ))
-                  ) : (
-                    <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
-                  )}
-                </div>
-              </div>
+              {creatingCampaign ? (
+                <>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Campaign name</div>
+                    <input
+                      className="ttd-input"
+                      value={campaignName}
+                      placeholder="Campaign name"
+                      onChange={(e) => setCampaignName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Player names</div>
+                    <textarea
+                      className="ttd-input ttd-textarea"
+                      value={campaignPlayerNames}
+                      placeholder={"Avery\nBlake\nCasey\nDrew"}
+                      onChange={(e) => setCampaignPlayerNames(e.target.value)}
+                    />
+                    <div className="ttd-field-hint">Enter names first, one per line or comma-separated.</div>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Number of players</div>
+                    <select
+                      className="ttd-input"
+                      value={campaignPlayerCount}
+                      onChange={(e) => setCampaignPlayerCount(Number(e.target.value))}
+                    >
+                      {[1, 2, 3, 4, 5, 6].map((count) => (
+                        <option key={count} value={count}>
+                          {count}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="ttd-field-hint">Only the first N names will be used for this roster.</div>
+                  </div>
+                  <div className="ttd-action-row" style={{ justifyContent: "space-between" }}>
+                    <button className="ttd-btn" onClick={() => setCreatingCampaign(false)}>
+                      Back
+                    </button>
+                    <button className="ttd-btn primary" onClick={createCampaignFromName}>
+                      Create Campaign
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Start new</div>
+                    <button
+                      className="ttd-btn primary"
+                      onClick={() => {
+                        setCreatingCampaign(true);
+                        setCampaignError(null);
+                      }}
+                    >
+                      New Campaign Setup
+                    </button>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Load existing</div>
+                    <div className="ttd-campaign-list">
+                      {campaigns.length ? (
+                        campaigns.map((c) => (
+                          <button key={c.id} className="ttd-btn ttd-campaign-option" onClick={() => selectCampaign(c.id)}>
+                            <span>{c.title}</span>
+                            <span className="ttd-campaign-option-sub">
+                              {c.setup?.playerCount ? `${c.setup.playerCount} players` : "No roster metadata"}
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
               {campaignError ? <div style={{ color: "#f1b2b2", fontSize: "0.9rem" }}>{campaignError}</div> : null}
-              {sessionInfo ? (
+              {sessionInfo && !creatingCampaign ? (
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <button className="ttd-btn" onClick={() => setCampaignPromptOpen(false)}>
                     Close
                   </button>
                 </div>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {showScenarioSelector ? (
+        <div className="ttd-modal-backdrop ttd-scenario-backdrop" onClick={() => {}}>
+          <div className="ttd-scenario-shell" onClick={(e) => e.stopPropagation()}>
+            <div className="ttd-modal-head">
+              <h3>Scenario Route Map</h3>
+              <span className="ttd-pill">{campaignTitle || "Campaign"}</span>
+            </div>
+            <p className="ttd-scenario-branch-note">
+              Choose where this run begins. Branches open or close later based on scenario decisions.
+            </p>
+            <div className="ttd-scenario-grid">
+              <section className="ttd-scenario-map" aria-label="Scenario process map">
+                <svg className="ttd-scenario-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {KEWL_SCENARIO_LINKS.map((link) => (
+                    <line
+                      key={link.id}
+                      x1={link.x1}
+                      y1={link.y1}
+                      x2={link.x2}
+                      y2={link.y2}
+                      stroke={link.unlocked ? "rgba(112, 198, 236, 0.54)" : "rgba(148, 166, 186, 0.34)"}
+                      strokeWidth="1.6"
+                      strokeDasharray={link.unlocked ? "0" : "2.8 2.8"}
+                    />
+                  ))}
+                </svg>
+                {KEWL_SCENARIOS.map((node) => {
+                  const isSelected = selectedScenario?.id === node.id;
+                  return (
+                    <button
+                      key={node.id}
+                      className={`ttd-scenario-node ${node.selectable ? "available" : "locked"}${isSelected ? " selected" : ""}`}
+                      style={{ left: `${node.x}%`, top: `${node.y}%` }}
+                      onClick={() => openScenarioDetails(node.id)}
+                      aria-pressed={isSelected}
+                    >
+                      <span className="ttd-scenario-kicker">{node.chapter}</span>
+                      <span className="ttd-scenario-name">{node.title}</span>
+                      <span className="ttd-scenario-teaser">{node.teaser}</span>
+                    </button>
+                  );
+                })}
+              </section>
+              <aside className="ttd-scenario-detail">
+                <h3 style={{ margin: 0 }}>{selectedScenario?.title || "Scenario Details"}</h3>
+                <div className="ttd-detail-chip-row">
+                  <span className="ttd-detail-chip">Difficulty: {selectedScenario?.difficulty || "-"}</span>
+                  <span className="ttd-detail-chip">Duration: {selectedScenario?.estDuration || "-"}</span>
+                </div>
+                <p className="ttd-scenario-branch-note">{selectedScenario?.teaser}</p>
+                <p className="ttd-scenario-branch-note">{selectedScenario?.intel}</p>
+                <p className="ttd-scenario-branch-note">Reward hint: {selectedScenario?.rewardHint}</p>
+                {!selectedScenario?.selectable ? (
+                  <p className="ttd-scenario-branch-note">Locked for now: complete Scenario 1 to open this branch.</p>
+                ) : (
+                  <p className="ttd-scenario-branch-note">Ready: this is the first playable scenario.</p>
+                )}
+                <div className="ttd-scenario-actions">
+                  <button className="ttd-btn" onClick={openCampaignPicker}>
+                    Switch Campaign
+                  </button>
+                  <button className="ttd-btn primary" onClick={embarkSelectedScenario} disabled={!selectedScenario?.selectable}>
+                    Embark
+                  </button>
+                </div>
+              </aside>
             </div>
           </div>
         </div>
@@ -4531,5 +4949,4 @@ export default function App() {
     />
   );
 }
-
 
