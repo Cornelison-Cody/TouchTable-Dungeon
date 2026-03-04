@@ -238,6 +238,15 @@ export function createCampaign(store, gameId, titleOrOptions) {
   return campaign;
 }
 
+export function deleteCampaign(store, gameId, campaignId) {
+  const entry = ensureGameEntry(store, gameId);
+  if (!campaignId) return null;
+  const idx = entry.campaigns.findIndex((c) => c.id === campaignId);
+  if (idx < 0) return null;
+  const [removed] = entry.campaigns.splice(idx, 1);
+  return removed || null;
+}
+
 export function touchCampaign(campaign) {
   if (campaign && typeof campaign === "object") {
     campaign.updatedAt = Date.now();

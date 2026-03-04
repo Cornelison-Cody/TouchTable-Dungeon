@@ -25,6 +25,8 @@ const panelStyle = {
 };
 
 const GRASSLAND_TEXTURE_URL = "/textures/grassland.png";
+const MOUNTAIN_TEXTURE_URL = "/textures/mountain.png";
+const DEEP_WATER_TEXTURE_URL = "/textures/deep_water.png";
 
 function makeWsUrl() {
   return localStorage.getItem("tt_server_ws") || "ws://localhost:3000";
@@ -187,6 +189,24 @@ function DungeonTableView({ onBackToMenu }) {
     }
     ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_SELECT, { gameId, title }, "campaign-select")));
     setCampaignName("");
+  }
+
+  function deleteCampaignById(campaignId, campaignTitle) {
+    if (!campaignId) return;
+    const confirmed = window.confirm(`Delete campaign "${campaignTitle || "Untitled"}"? This cannot be undone.`);
+    if (!confirmed) return;
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_DELETE, { gameId, campaignId }, "campaign-delete")));
+    if (sessionInfo?.campaign?.id === campaignId) {
+      setSessionInfo(null);
+      setPublicState(null);
+      setCampaignPromptOpen(true);
+    }
   }
   function spawnEnemyForTesting() {
     sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
@@ -589,12 +609,31 @@ function DungeonTableView({ onBackToMenu }) {
     }
 
     if (terrain.id === "frozen_scree") {
+      const scale = 1.33;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
-        <g fill="none" stroke="rgba(217, 230, 244, 0.35)" strokeWidth="1.4" strokeLinecap="round">
-          <path d={`M${width * 0.26} ${height * 0.32} L${width * 0.36} ${height * 0.24} L${width * 0.42} ${height * 0.34}`} />
-          <path d={`M${width * 0.52} ${height * 0.3} L${width * 0.64} ${height * 0.2} L${width * 0.7} ${height * 0.32}`} />
-          <path d={`M${width * 0.34} ${height * 0.66} L${width * 0.46} ${height * 0.56} L${width * 0.54} ${height * 0.7}`} />
-        </g>
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={MOUNTAIN_TEXTURE_URL}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            opacity={0.96}
+          />
+        </>
       );
     }
 
@@ -610,12 +649,33 @@ function DungeonTableView({ onBackToMenu }) {
     }
 
     if (terrain.id === "shallow_water" || terrain.id === "deep_water") {
+      const scale = 1.4;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
-        <g stroke="rgba(177, 220, 248, 0.36)" strokeWidth="1.5" fill="none" strokeLinecap="round">
-          <path d={`M${width * 0.2} ${height * 0.36} Q${width * 0.3} ${height * 0.28} ${width * 0.4} ${height * 0.36} T${width * 0.6} ${height * 0.36} T${width * 0.8} ${height * 0.36}`} />
-          <path d={`M${width * 0.18} ${height * 0.56} Q${width * 0.28} ${height * 0.48} ${width * 0.38} ${height * 0.56} T${width * 0.58} ${height * 0.56} T${width * 0.78} ${height * 0.56}`} />
-          <path d={`M${width * 0.24} ${height * 0.74} Q${width * 0.34} ${height * 0.66} ${width * 0.44} ${height * 0.74} T${width * 0.64} ${height * 0.74}`} />
-        </g>
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={DEEP_WATER_TEXTURE_URL}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            stroke="rgba(8, 20, 40, 0.94)"
+            strokeWidth="1.8"
+            opacity={0.98}
+          />
+        </>
       );
     }
 
@@ -665,7 +725,7 @@ function DungeonTableView({ onBackToMenu }) {
             radial-gradient(circle at 100% 0%, rgba(74, 134, 214, 0.18), transparent 45%),
             linear-gradient(160deg, #0d131a 0%, #121a22 50%, #101821 100%);
           font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-          padding: 16px;
+          padding: 16px 16px 5px;
           box-sizing: border-box;
         }
         .ttd-shell {
@@ -1418,9 +1478,14 @@ function DungeonTableView({ onBackToMenu }) {
                 <div style={{ display: "grid", gap: 6, maxHeight: 260, overflow: "auto" }}>
                   {campaigns.length ? (
                     campaigns.map((c) => (
-                      <button key={c.id} className="ttd-btn" onClick={() => selectCampaign(c.id)}>
-                        {c.title}
-                      </button>
+                      <div key={c.id} style={{ display: "flex", gap: 8 }}>
+                        <button className="ttd-btn" style={{ flex: 1 }} onClick={() => selectCampaign(c.id)}>
+                          {c.title}
+                        </button>
+                        <button className="ttd-btn danger" onClick={() => deleteCampaignById(c.id, c.title)}>
+                          Delete
+                        </button>
+                      </div>
                     ))
                   ) : (
                     <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
@@ -1606,8 +1671,9 @@ function KewlCardGameTableView({ onBackToMenu }) {
   const [cameraPx, setCameraPx] = useState({ x: 0, y: 0 });
   const [boardViewport, setBoardViewport] = useState({ width: 0, height: 0 });
   const [focusedPlayerId, setFocusedPlayerId] = useState(null);
-  const [boardMaximized, setBoardMaximized] = useState(false);
   const [boardZoom, setBoardZoom] = useState(1);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
 
   const wsRef = useRef(null);
   const prevEnemyHpRef = useRef({});
@@ -1723,12 +1789,37 @@ function KewlCardGameTableView({ onBackToMenu }) {
     setCampaignPlayerCount(4);
     setCreatingCampaign(false);
   }
+
+  function deleteCampaignById(campaignId, campaignTitle) {
+    if (!campaignId) return;
+    const confirmed = window.confirm(`Delete campaign "${campaignTitle || "Untitled"}"? This cannot be undone.`);
+    if (!confirmed) return;
+    setCampaignError(null);
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCampaignError("Not connected to server.");
+      return;
+    }
+    ws.send(JSON.stringify(makeMsg(MsgType.CAMPAIGN_DELETE, { gameId, campaignId }, "campaign-delete")));
+    if (sessionInfo?.campaign?.id === campaignId) {
+      setSessionInfo(null);
+      setPublicState(null);
+      setScenarioEmbarked(false);
+      setScenarioSelectorOpen(false);
+      setCampaignPromptOpen(true);
+    }
+  }
   function spawnEnemyForTesting() {
     sendTableAction(ActionType.SPAWN_ENEMY, {}, "spawn-enemy");
   }
 
   function undoLastAction() {
     sendTableAction(ActionType.UNDO, {}, "undo-action");
+  }
+
+  function closeToGameMenu() {
+    setMenuOpen(false);
+    onBackToMenu();
   }
 
   function startNewCampaign() {
@@ -1852,8 +1943,6 @@ function KewlCardGameTableView({ onBackToMenu }) {
     noise.stop(t + 0.1);
   }
 
-  const joinUrl = withGameParam(sessionInfo?.joinUrl || "", "kewl-card-game");
-  const campaignTitle = sessionInfo?.campaign?.title || '';
   const showCampaignPrompt = campaignPromptOpen;
   const showScenarioSelector = Boolean(sessionInfo) && !showCampaignPrompt && (scenarioSelectorOpen || !scenarioEmbarked);
   const selectedScenario = KEWL_SCENARIOS.find((node) => node.id === selectedScenarioId) || KEWL_SCENARIOS[0];
@@ -1873,6 +1962,19 @@ function KewlCardGameTableView({ onBackToMenu }) {
   const apRemaining = game?.turn?.apRemaining ?? 0;
   const enemyCount = livingEnemies.length;
   const activeHero = heroes.find((h) => h.ownerPlayerId === activePlayerId) || null;
+  const rosterNames = Array.isArray(sessionInfo?.campaign?.setup?.playerNames)
+    ? sessionInfo.campaign.setup.playerNames
+    : [];
+  const headerPlayers = rosterNames.length
+    ? rosterNames.map((name) => ({
+        name,
+        hero:
+          heroes.find(
+            (h) =>
+              (h.ownerPlayerName || "").toLowerCase() === (name || "").toLowerCase()
+          ) || null
+      }))
+    : heroes.map((h) => ({ name: h.ownerPlayerName || h.ownerPlayerId || "Player", hero: h }));
 
   useEffect(() => {
     window.addEventListener("pointerdown", unlockAudio);
@@ -1987,21 +2089,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
     updateViewport();
     window.addEventListener("resize", updateViewport);
     return () => window.removeEventListener("resize", updateViewport);
-  }, [boardMaximized]);
-
-  useEffect(() => {
-    if (!boardMaximized) return undefined;
-    const prevOverflow = document.body.style.overflow;
-    const onEsc = (ev) => {
-      if (ev.key === "Escape") setBoardMaximized(false);
-    };
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onEsc);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener("keydown", onEsc);
-    };
-  }, [boardMaximized]);
+  }, []);
 
   useEffect(() => {
     cameraPxRef.current = cameraPx;
@@ -2174,12 +2262,31 @@ function KewlCardGameTableView({ onBackToMenu }) {
     }
 
     if (terrain.id === "frozen_scree") {
+      const scale = 1.33;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
-        <g fill="none" stroke="rgba(217, 230, 244, 0.35)" strokeWidth="1.4" strokeLinecap="round">
-          <path d={`M${width * 0.26} ${height * 0.32} L${width * 0.36} ${height * 0.24} L${width * 0.42} ${height * 0.34}`} />
-          <path d={`M${width * 0.52} ${height * 0.3} L${width * 0.64} ${height * 0.2} L${width * 0.7} ${height * 0.32}`} />
-          <path d={`M${width * 0.34} ${height * 0.66} L${width * 0.46} ${height * 0.56} L${width * 0.54} ${height * 0.7}`} />
-        </g>
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={MOUNTAIN_TEXTURE_URL}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            opacity={0.96}
+          />
+        </>
       );
     }
 
@@ -2195,12 +2302,33 @@ function KewlCardGameTableView({ onBackToMenu }) {
     }
 
     if (terrain.id === "shallow_water" || terrain.id === "deep_water") {
+      const scale = 1.4;
+      const texW = width * scale;
+      const texH = height * scale;
+      const texX = (width - texW) / 2;
+      const texY = (height - texH) / 2;
       return (
-        <g stroke="rgba(177, 220, 248, 0.36)" strokeWidth="1.5" fill="none" strokeLinecap="round">
-          <path d={`M${width * 0.2} ${height * 0.36} Q${width * 0.3} ${height * 0.28} ${width * 0.4} ${height * 0.36} T${width * 0.6} ${height * 0.36} T${width * 0.8} ${height * 0.36}`} />
-          <path d={`M${width * 0.18} ${height * 0.56} Q${width * 0.28} ${height * 0.48} ${width * 0.38} ${height * 0.56} T${width * 0.58} ${height * 0.56} T${width * 0.78} ${height * 0.56}`} />
-          <path d={`M${width * 0.24} ${height * 0.74} Q${width * 0.34} ${height * 0.66} ${width * 0.44} ${height * 0.74} T${width * 0.64} ${height * 0.74}`} />
-        </g>
+        <>
+          <defs>
+            <pattern id={textureId} patternUnits="userSpaceOnUse" width={width} height={height}>
+              <image
+                href={DEEP_WATER_TEXTURE_URL}
+                x={texX}
+                y={texY}
+                width={texW}
+                height={texH}
+                preserveAspectRatio="xMidYMid meet"
+              />
+            </pattern>
+          </defs>
+          <polygon
+            points={`${width * 0.25},0 ${width * 0.75},0 ${width},${height * 0.5} ${width * 0.75},${height} ${width * 0.25},${height} 0,${height * 0.5}`}
+            fill={`url(#${textureId})`}
+            stroke="rgba(8, 20, 40, 0.94)"
+            strokeWidth="1.8"
+            opacity={0.98}
+          />
+        </>
       );
     }
 
@@ -2283,6 +2411,30 @@ function KewlCardGameTableView({ onBackToMenu }) {
           flex-wrap: wrap;
           justify-content: flex-end;
         }
+        .ttd-header-players {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          flex: 1;
+          min-width: 0;
+        }
+        .ttd-player-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 166, 186, 0.2);
+          background: rgba(18, 26, 36, 0.75);
+          padding: 4px 9px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: var(--ttd-sub);
+          white-space: nowrap;
+        }
+        .ttd-player-chip strong {
+          color: var(--ttd-ink);
+          font-weight: 800;
+        }
         .ttd-status {
           display: inline-flex;
           align-items: center;
@@ -2351,6 +2503,27 @@ function KewlCardGameTableView({ onBackToMenu }) {
           color: #ffffff;
           border-color: rgba(255, 107, 107, 0.35);
           background: linear-gradient(135deg, #ff6b6b, #c94545);
+        }
+        .ttd-menu-wrap {
+          position: relative;
+        }
+        .ttd-menu-list {
+          position: absolute;
+          top: calc(100% + 6px);
+          right: 0;
+          z-index: 15;
+          min-width: 180px;
+          display: grid;
+          gap: 6px;
+          padding: 8px;
+          border-radius: 12px;
+          border: 1px solid rgba(148, 166, 186, 0.22);
+          background: rgba(18, 26, 36, 0.98);
+          box-shadow: 0 14px 28px rgba(0, 0, 0, 0.35);
+        }
+        .ttd-menu-item {
+          width: 100%;
+          text-align: left;
         }
         .ttd-pill {
           display: inline-flex;
@@ -2741,193 +2914,95 @@ function KewlCardGameTableView({ onBackToMenu }) {
 
       <div className="ttd-shell">
         <header className="ttd-header">
-          <div>
-            <h1 className="ttd-title">Kewl Card Game</h1>
-            <div style={{ marginTop: 6, color: "var(--ttd-sub)", fontWeight: 700 }}>Campaign: {campaignTitle || "Select a campaign"}</div>
+          <div className="ttd-header-players">
+            {sessionInfo ? (
+              headerPlayers.length ? (
+                headerPlayers.map((p, idx) => (
+                  <span key={`${p.name}-${idx}`} className="ttd-player-chip">
+                    <strong>{p.name}</strong>
+                    {p.hero ? `${p.hero.hp}/${p.hero.maxHp}` : "--/--"}
+                  </span>
+                ))
+              ) : (
+                <span className="ttd-player-chip">No players</span>
+              )
+            ) : null}
           </div>
           <div className="ttd-header-meta">
-            <button className="ttd-btn" onClick={onBackToMenu}>
-              Game Menu
-            </button>
-            <span className="ttd-pill">AP: <span style={mono}>{apRemaining}/{apMax}</span></span>
-            <div className="ttd-status">
-              <span className="ttd-dot" style={{ background: statusColor(status) }} />
-              {status}
+            <div className="ttd-menu-wrap">
+              <button className="ttd-btn" onClick={() => setMenuOpen((v) => !v)}>
+                Menu
+              </button>
+              {menuOpen ? (
+                <div className="ttd-menu-list">
+                  <button
+                    className="ttd-btn ttd-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      undoLastAction();
+                    }}
+                    disabled={!game}
+                  >
+                    Undo
+                  </button>
+                  <button
+                    className="ttd-btn ttd-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      spawnEnemyForTesting();
+                    }}
+                  >
+                    Spawn Monster
+                  </button>
+                  <button
+                    className="ttd-btn ttd-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setLogOpen(true);
+                    }}
+                  >
+                    Log
+                  </button>
+                  <button className="ttd-btn danger ttd-menu-item" onClick={closeToGameMenu}>
+                    Close
+                  </button>
+                </div>
+              ) : null}
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                className="ttd-btn"
+                onClick={() => setBoardZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))}
+                aria-label="Zoom out"
+              >
+                -
+              </button>
+              <span className="ttd-pill">{Math.round(boardZoom * 100)}%</span>
+              <button
+                className="ttd-btn"
+                onClick={() => setBoardZoom((z) => Math.min(2, Number((z + 0.25).toFixed(2))))}
+                aria-label="Zoom in"
+              >
+                +
+              </button>
+            </div>
+            <span className="ttd-pill">AP: <span style={mono}>{apRemaining}/{apMax}</span></span>
           </div>
         </header>
 
         {error ? <div className="ttd-error">{error}</div> : null}
 
-        <div className="ttd-layout" style={boardMaximized ? { gridTemplateColumns: "1fr" } : undefined}>
-          <div className="ttd-stack" style={boardMaximized ? { display: "none" } : undefined}>
-            <section style={panelStyle}>
-              <h2 className="ttd-section-title">
-                <Icon path="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M15 15h1 M17 15h3 M15 17h5 M15 19h2 M19 19h1" />
-                Session
-              </h2>
-              <div className="ttd-action-row">
-                <button className="ttd-btn primary" onClick={() => setQrOpen(true)} disabled={!sessionInfo}>
-                  Show QR
-                </button>
-                <button className="ttd-btn" onClick={spawnEnemyForTesting}>
-                  Spawn Random Monster
-                </button>
-                <button className="ttd-btn" onClick={undoLastAction} disabled={!game}>
-                  Undo Last Action
-                </button>
-                <button className="ttd-btn danger" onClick={startNewCampaign}>
-                  New Campaign
-                </button>
-                <button className="ttd-btn" onClick={openCampaignPicker}>
-                  Switch Campaign
-                </button>
-                <button
-                  className="ttd-btn"
-                  onClick={() => {
-                    unlockAudio();
-                    playHitSound();
-                  }}
-                >
-                  Test Hit Sound
-                </button>
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <span className="ttd-pill">SFX: {audioReady ? "ready" : "tap once to enable"}</span>
-              </div>
-            </section>
-
-            <section style={panelStyle}>
-              <h2 className="ttd-section-title">
-                <Icon path="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M8.5 7a4 4 0 1 0 0 .01 M20 8v6 M17 11h6" />
-                Players
-                <span className="ttd-pill">{heroes.length} heroes</span>
-              </h2>
-              {publicState?.seats ? (
-                <ul className="ttd-players">
-                  {publicState.seats.map((seat) => {
-                    const seatHero = seat.playerId ? heroByOwnerId.get(seat.playerId) : null;
-                    const canFocus = Boolean(seatHero && seatHero.hp > 0);
-                    const isFocused = Boolean(seat.playerId && seat.playerId === focusedPlayerId);
-                    return (
-                    <li
-                      key={seat.seat}
-                      className="ttd-player"
-                      onClick={canFocus ? () => focusCameraOnPlayer(seat.playerId) : undefined}
-                      style={canFocus ? { cursor: "pointer", borderColor: isFocused ? "rgba(112, 198, 236, 0.72)" : undefined, boxShadow: isFocused ? "0 0 0 1px rgba(112, 198, 236, 0.35) inset" : undefined } : undefined}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <span className="ttd-seat">Seat {seat.seat}</span>
-                        <span className="ttd-name" style={{ opacity: seat.occupied ? (seat.connected === false ? 0.45 : 1) : 0.5 }}>
-                          {seat.occupied ? seat.playerName : "Empty"}
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {seat.playerId && heroByOwnerId.get(seat.playerId) ? (
-                          <span className="ttd-pill">
-                            {heroByOwnerId.get(seat.playerId).hp}/{heroByOwnerId.get(seat.playerId).maxHp}
-                          </span>
-                        ) : null}
-                        {seat.playerId && activePlayerId === seat.playerId ? <span className="ttd-pill">Active</span> : null}
-                        {seat.occupied && seat.playerId && seat.connected === false ? <span className="ttd-pill">Disconnected</span> : null}
-                        {seat.occupied && seat.playerId ? (
-                          <button className="ttd-btn warn" onClick={(e) => { e.stopPropagation(); kickPlayer(seat.playerId, seat.playerName); }}>
-                            Kick
-                          </button>
-                        ) : null}
-                      </div>
-                    </li>
-                  )})}
-                </ul>
-              ) : (
-                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for players...</p>
-              )}
-            </section>
-
-            <section style={panelStyle}>
-              <h2 className="ttd-section-title">
-                <Icon path="M4 20l8-16 8 16 M7 14h10" />
-                Encounter
-              </h2>
-              {game ? (
-                <div className="ttd-stat-grid">
-                  <div className="ttd-stat">
-                    <label>Enemies Alive</label>
-                    <strong style={mono}>{enemyCount}</strong>
-                  </div>
-                  <div className="ttd-stat">
-                    <label>Scenario Goal</label>
-                    <strong style={mono}>
-                      {scenario?.objective?.targetCount
-                        ? `${scenario?.defeatedCount || 0}/${scenario.objective.targetCount} defeated`
-                        : "In progress"}
-                    </strong>
-                    <div style={{ marginTop: 4, color: "var(--ttd-sub)", fontSize: "0.75rem", fontWeight: 700 }}>
-                      {scenario?.status === "victory" ? "Victory" : "Active"}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No encounter yet.</p>
-              )}
-            </section>
-
-            <section style={panelStyle}>
-              <h2 className="ttd-section-title">
-                <Icon path="M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                Event Log
-              </h2>
-              {log.length ? (
-                <ul className="ttd-log">
-                  {log
-                    .slice()
-                    .reverse()
-                    .map((entry, idx) => (
-                      <li key={idx}>{entry.msg}</li>
-                    ))}
-                </ul>
-              ) : (
-                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No events yet.</p>
-              )}
-            </section>
-          </div>
+        <div className="ttd-layout" style={{ gridTemplateColumns: "1fr" }}>
 
           <section
             style={{
               ...panelStyle,
               border: "1px solid rgba(32, 191, 183, 0.3)",
-              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)",
-              ...(boardMaximized
-                ? {
-                    position: "fixed",
-                    inset: 8,
-                    zIndex: 35,
-                    minHeight: "auto",
-                    height: "calc(100dvh - 16px)",
-                    margin: 0
-                  }
-                : null)
+              boxShadow: "0 22px 48px rgba(0, 0, 0, 0.5)"
             }}
             className="ttd-board-shell"
           >
-            <div className="ttd-board-head">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button className="ttd-btn" onClick={() => setBoardZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))}>
-                  Zoom Out
-                </button>
-                <span className="ttd-pill">{Math.round(boardZoom * 100)}%</span>
-                <button className="ttd-btn" onClick={() => setBoardZoom((z) => Math.min(2, Number((z + 0.25).toFixed(2))))}>
-                  Zoom In
-                </button>
-                <button className="ttd-btn" onClick={() => setBoardZoom(1)} disabled={Math.abs(boardZoom - 1) < 0.001}>
-                  Reset
-                </button>
-              </div>
-              <button className="ttd-btn" onClick={() => setBoardMaximized((v) => !v)}>
-                {boardMaximized ? "Minimize" : "Maximize"}
-              </button>
-            </div>
-            <div className="ttd-board-scroll" ref={boardScrollRef} style={boardMaximized ? { minHeight: 0 } : undefined}>
+            <div className="ttd-board-scroll" ref={boardScrollRef}>
               <button
                 className="ttd-pan-btn ttd-pan-top"
                 aria-label="Scroll board up"
@@ -2957,7 +3032,7 @@ function KewlCardGameTableView({ onBackToMenu }) {
                 W
               </button>
 
-              <div className="ttd-board-canvas" style={boardMaximized ? { minHeight: 0 } : undefined}>
+              <div className="ttd-board-canvas">
                 {Array.from({ length: visibleMaxX - visibleMinX + 1 }).map((_, xi) => {
                   const x = visibleMinX + xi;
                   return Array.from({ length: visibleMaxY - visibleMinY + 1 }).map((__, yi) => {
@@ -3248,12 +3323,17 @@ function KewlCardGameTableView({ onBackToMenu }) {
                     <div className="ttd-campaign-list">
                       {campaigns.length ? (
                         campaigns.map((c) => (
-                          <button key={c.id} className="ttd-btn ttd-campaign-option" onClick={() => selectCampaign(c.id)}>
-                            <span>{c.title}</span>
-                            <span className="ttd-campaign-option-sub">
-                              {c.setup?.playerCount ? `${c.setup.playerCount} players` : "No roster metadata"}
-                            </span>
-                          </button>
+                          <div key={c.id} style={{ display: "flex", gap: 8 }}>
+                            <button className="ttd-btn ttd-campaign-option" style={{ flex: 1 }} onClick={() => selectCampaign(c.id)}>
+                              <span>{c.title}</span>
+                              <span className="ttd-campaign-option-sub">
+                                {c.setup?.playerCount ? `${c.setup.playerCount} players` : "No roster metadata"}
+                              </span>
+                            </button>
+                            <button className="ttd-btn danger" onClick={() => deleteCampaignById(c.id, c.title)}>
+                              Delete
+                            </button>
+                          </div>
                         ))
                       ) : (
                         <div style={{ color: "var(--ttd-sub)" }}>No campaigns yet.</div>
@@ -3373,43 +3453,33 @@ function KewlCardGameTableView({ onBackToMenu }) {
         </div>
       ) : null}
 
-      {kickPrompt ? (
-        <div className="ttd-modal-backdrop" onClick={() => setKickPrompt(null)}>
+      {logOpen ? (
+        <div className="ttd-modal-backdrop" onClick={() => setLogOpen(false)}>
           <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
             <div className="ttd-modal-head">
-              <h3>Kick Player?</h3>
+              <h3>Log</h3>
             </div>
-            <p style={{ marginTop: 0, marginBottom: 14, color: "var(--ttd-sub)" }}>
-              Remove <strong>{kickPrompt.playerName}</strong> from this session?
-            </p>
-            <div className="ttd-action-row" style={{ justifyContent: "flex-end" }}>
-              <button className="ttd-btn" onClick={() => setKickPrompt(null)}>
-                Cancel
-              </button>
-              <button className="ttd-btn danger" onClick={confirmKickPlayer}>
-                Kick Player
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {qrOpen ? (
-        <div className="ttd-modal-backdrop" onClick={() => setQrOpen(false)}>
-          <div className="ttd-modal" onClick={(e) => e.stopPropagation()}>
-            {joinUrl ? (
-              <div className="ttd-qr-wrap">
-                <QRCodeCanvas value={joinUrl} size={280} includeMargin />
-              </div>
+            {log.length ? (
+              <ul className="ttd-log" style={{ marginTop: 0 }}>
+                {log
+                  .slice()
+                  .reverse()
+                  .map((entry, idx) => (
+                    <li key={idx}>{entry.msg}</li>
+                  ))}
+              </ul>
             ) : (
-              <div className="ttd-qr-wrap">
-                <p style={{ margin: 0, color: "var(--ttd-sub)" }}>Waiting for session QR...</p>
-              </div>
+              <p style={{ margin: 0, color: "var(--ttd-sub)" }}>No events yet.</p>
             )}
-
+            <div className="ttd-action-row" style={{ justifyContent: "flex-end", marginTop: 10 }}>
+              <button className="ttd-btn" onClick={() => setLogOpen(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
+
     </div>
   );
 }

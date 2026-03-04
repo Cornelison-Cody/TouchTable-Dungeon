@@ -163,7 +163,7 @@ export function terrainTypeAt(x, y, terrainSeed = 0) {
     if (detailRoll < 0.71) return "grassland";
     if (detailRoll < 0.84) return "mudflat";
     if (detailRoll < 0.95) return "thornbrush";
-    return objectRoll < 0.6 ? "deep_water" : "boulder";
+    return objectRoll < 0.6 ? "shallow_water" : "boulder";
   }
 
   if (biomeRoll > 0.69) {

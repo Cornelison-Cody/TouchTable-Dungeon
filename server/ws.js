@@ -4,6 +4,7 @@ import os from "os";
 import { MsgType, Role, PROTOCOL_VERSION, makeMsg } from "../shared/protocol.js";
 import {
   createCampaign,
+  deleteCampaign,
   getCampaign,
   listCampaigns,
   loadCampaignStore,
@@ -1965,6 +1966,9 @@ export function setupWebSocket(server) {
         if (!sessionId) return reject(ws, msg.id, "NO_SESSION", "sessionId required for phone clients.");
         const ctx = getSessionContext(sessionId);
         if (!ctx) return reject(ws, msg.id, "BAD_SESSION", "Unknown session.");
+        if (ctx.gameId === "kewl-card-game") {
+          return reject(ws, msg.id, "TABLE_ONLY", "Kewl Card Game is table-only and does not use phones.");
+        }
         info.sessionId = sessionId;
         info.gameId = ctx.gameId;
         bindContext(ctx);
@@ -2038,6 +2042,62 @@ export function setupWebSocket(server) {
       send(ws, makeMsg(MsgType.CAMPAIGN_LIST, { gameId: requestedGameId, campaigns: listCampaignSummaries(requestedGameId) }, "campaign-list"));
       emitViews();
       syncContext(ctx);
+      return;
+    }
+
+    if (msg.t === MsgType.CAMPAIGN_DELETE) {
+      if (info.role !== Role.TABLE) return reject(ws, msg.id, "NOT_TABLE", "Only the table can delete campaigns.");
+      const requestedGameId = (msg.payload?.gameId ?? info.gameId ?? "").toString().trim();
+      if (!requestedGameId) return reject(ws, msg.id, "BAD_GAME", "gameId required.");
+      const requestedCampaignId = (msg.payload?.campaignId ?? "").toString().trim();
+      if (!requestedCampaignId) return reject(ws, msg.id, "BAD_CAMPAIGN", "campaignId required.");
+
+      const existing = getCampaign(campaignStore, requestedGameId, requestedCampaignId);
+      if (!existing) return reject(ws, msg.id, "BAD_CAMPAIGN", "Campaign not found.");
+
+      const doomedSessionId = sessionByCampaignId.get(requestedCampaignId) || null;
+      if (doomedSessionId) {
+        const doomedCtx = sessions.get(doomedSessionId) || null;
+        if (doomedCtx) {
+          for (const [clientWs, cInfo] of clients.entries()) {
+            if (cInfo.sessionId !== doomedSessionId) continue;
+            if (clientWs === ws) continue;
+            if (cInfo.role === Role.PHONE) {
+              send(
+                clientWs,
+                makeMsg(
+                  MsgType.ERROR,
+                  { code: "CAMPAIGN_DELETED", message: "This campaign was deleted by the table." },
+                  "campaign-deleted"
+                )
+              );
+              send(
+                clientWs,
+                makeMsg(MsgType.STATE_PRIVATE, { state: { sessionId: doomedSessionId, player: null, game: null } })
+              );
+            }
+            cInfo.sessionId = null;
+            cInfo.playerId = null;
+            cInfo.seat = null;
+          }
+          sessions.delete(doomedSessionId);
+        }
+        sessionByCampaignId.delete(requestedCampaignId);
+      }
+
+      deleteCampaign(campaignStore, requestedGameId, requestedCampaignId);
+      saveCampaignStore(campaignStore);
+
+      if (info.sessionId === doomedSessionId) {
+        info.sessionId = null;
+      }
+      info.gameId = requestedGameId;
+
+      send(ws, makeMsg(MsgType.OK, { accepted: true, deletedCampaignId: requestedCampaignId }, msg.id));
+      send(
+        ws,
+        makeMsg(MsgType.CAMPAIGN_LIST, { gameId: requestedGameId, campaigns: listCampaignSummaries(requestedGameId) }, "campaign-list")
+      );
       return;
     }
 
